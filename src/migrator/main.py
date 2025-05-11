@@ -28,21 +28,21 @@ import shutil
 import subprocess
 
 # Import package manager modules
-from package_managers.factory import PackageManagerFactory
-from package_managers.base import Package, PackageManager
+from .package_managers.factory import PackageManagerFactory
+from .package_managers.base import Package, PackageManager
 
 # Import config tracker modules
-from config_trackers.base import ConfigFile
-from config_trackers.system_config import SystemConfigTracker
-from config_trackers.user_config import UserConfigTracker
-from config_trackers.desktop_environment import DesktopEnvironmentTracker
+from .config_trackers.base import ConfigFile
+from .config_trackers.system_config import SystemConfigTracker
+from .config_trackers.user_config import UserConfigTracker
+from .config_trackers.desktop_environment import DesktopEnvironmentTracker
 
 # Import utilities
-from utils.distro import get_distro_info, DistroInfo
-from utils.config import config
-from utils.sysvar import system_variables, SystemVariables
-from utils.fstab import FstabManager
-from utils.progress import ProgressTracker, MultiProgressTracker, OperationType
+from .utils.distro import get_distro_info, DistroInfo
+from .utils.config import config
+from .utils.sysvar import system_variables, SystemVariables
+from .utils.fstab import FstabManager
+from .utils.progress import ProgressTracker, MultiProgressTracker, OperationType
 
 # Configure logging
 logging.basicConfig(

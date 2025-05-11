@@ -10,7 +10,7 @@ import json
 from typing import List, Dict, Any, Optional, Set
 
 from .base import ConfigTracker, ConfigFile
-from utils.fstab import FstabManager, FstabEntry
+from ..utils.fstab import FstabManager, FstabEntry
 
 logger = logging.getLogger(__name__)
 

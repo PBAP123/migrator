@@ -26,8 +26,8 @@ import textwrap
 from datetime import datetime
 from typing import List, Dict, Any
 
-from main import Migrator
-from utils.service import create_systemd_service, remove_systemd_service
+from .main import Migrator
+from .utils.service import create_systemd_service, remove_systemd_service
 
 logger = logging.getLogger(__name__)
 

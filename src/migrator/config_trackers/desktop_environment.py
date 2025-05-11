@@ -364,4 +364,61 @@ class DesktopEnvironmentTracker(ConfigTracker):
             )
         except Exception as e:
             logger.error(f"Error creating config file for {path}: {e}")
-            return None 
+            return None
+
+    def get_config_file(self, path: str) -> Optional[ConfigFile]:
+        """Get a specific configuration file by path"""
+        abs_path = os.path.abspath(os.path.expanduser(path))
+        return self.tracked_files.get(abs_path)
+    
+    def track_config_file(self, path: str, description: str = "", category: str = "") -> Optional[ConfigFile]:
+        """Add a configuration file to be tracked"""
+        abs_path = os.path.abspath(os.path.expanduser(path))
+        if not os.path.exists(abs_path) or not os.access(abs_path, os.R_OK):
+            logger.warning(f"Cannot track non-existent or unreadable file: {abs_path}")
+            return None
+        
+        # Default to generic desktop environment category if none provided
+        if not category:
+            category = "desktop_environment:other"
+            
+        # Create a new config file object
+        config_file = ConfigFile(
+            path=abs_path,
+            description=description,
+            category=category,
+            is_system_config=False
+        )
+        
+        self.tracked_files[abs_path] = config_file
+        return config_file
+    
+    def stop_tracking_config_file(self, path: str) -> bool:
+        """Stop tracking a configuration file"""
+        abs_path = os.path.abspath(os.path.expanduser(path))
+        if abs_path in self.tracked_files:
+            del self.tracked_files[abs_path]
+            return True
+        return False
+    
+    def get_changed_files(self) -> List[ConfigFile]:
+        """Get list of tracked files that have changed since last check"""
+        changed_files = []
+        
+        for path, config_file in list(self.tracked_files.items()):
+            if not os.path.exists(path):
+                # File was deleted
+                changed_files.append(config_file)
+                # Keep tracking it to note the deletion
+            elif config_file.has_changed():
+                # File was modified
+                changed_files.append(config_file)
+                # Update the checksum
+                config_file.update()
+        
+        return changed_files
+    
+    def update_all(self) -> None:
+        """Update checksums for all tracked files"""
+        for config_file in self.tracked_files.values():
+            config_file.update() 
