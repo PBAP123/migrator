@@ -19,37 +19,70 @@ A system migration utility for Linux that tracks installed packages and configur
 
 - **Python**: Version 3.6 or higher
 - **Linux OS**: Any distribution with standard package managers
-- **Dependencies**: 
-  - `distro` Python package (v1.5.0 or higher)
-  - Access to package manager executables for detection (apt, snap, flatpak, etc.)
+- **Required Packages** (for Debian/Ubuntu):
+  - `python3-venv`: Required for creating virtual environments
+  - `python3-pip`: Required for installing Python packages
+  - `python3-distro` or the `distro` Python package (v1.5.0 or higher)
+- **Access to package managers** for detection (apt, snap, flatpak, etc.)
 
 ## Installation
 
-### Recommended: Using a Virtual Environment
+### Step 1: Install Required Dependencies
 
-Modern Linux distributions (especially Debian/Ubuntu-based ones) enforce PEP 668, which prevents direct pip installations outside of virtual environments. Using a virtual environment is the recommended approach:
+On Debian/Ubuntu systems:
+
+```bash
+# Install required system packages (use your Python version)
+sudo apt install python3-venv python3-pip python3-distro
+
+# For Python 3.12 specifically
+# sudo apt install python3.12-venv
+```
+
+On Fedora/RHEL systems:
+
+```bash
+sudo dnf install python3-virtualenv python3-pip python3-distro
+```
+
+On Arch-based systems:
+
+```bash
+sudo pacman -S python-virtualenv python-pip python-distro
+```
+
+### Step 2: Clone the Repository
 
 ```bash
 # Clone the repository
 git clone https://github.com/PBAP123/migrator.git
 cd migrator
+```
 
-# Make sure you have Python 3.6+ installed
-python3 --version
+### Step 3: Set Up a Virtual Environment
 
-# Install virtualenv if you don't have it
-# For Debian/Ubuntu:
-sudo apt install python3-venv
+Modern Linux distributions (especially Debian/Ubuntu-based ones) enforce PEP 668, which prevents direct pip installations outside of virtual environments.
 
+```bash
 # Create a virtual environment
 python3 -m venv ~/.venvs/migrator
 
 # Activate the virtual environment
 source ~/.venvs/migrator/bin/activate
 
+# You should see (migrator) at the beginning of your prompt
+# indicating the virtual environment is active
+```
+
+### Step 4: Install Migrator
+
+```bash
+# Make sure you're in the migrator directory with activated environment
 # Install dependencies and the package
 pip install -r requirements.txt
 pip install -e .
+
+# You should see a message about the wrapper script being installed
 ```
 
 ### Running Migrator Commands
@@ -70,6 +103,14 @@ After installation, there are two ways to run Migrator:
    - Works whether you're already in a virtual environment or not
 
    > **Note**: Make sure `~/.local/bin` is in your PATH. If you see a message about this during installation, follow the provided instructions.
+   >
+   > ```bash
+   > # Add to your ~/.bashrc if needed:
+   > export PATH="$HOME/.local/bin:$PATH"
+   > 
+   > # Then reload your profile
+   > source ~/.bashrc
+   > ```
 
 2. **Manual virtual environment activation**:
 
@@ -78,14 +119,46 @@ After installation, there are two ways to run Migrator:
    migrator scan
    ```
 
-### Alternative: Run Without Installing
+### Alternative: Using pipx
 
-If you prefer not to install, you can run Migrator directly:
+If you prefer, you can use pipx which manages virtual environments automatically:
 
 ```bash
+# Install pipx if you don't have it
+sudo apt install pipx  # or equivalent for your distribution
+pipx ensurepath
+
+# Install Migrator
 cd migrator
-python3 -m src.__main__ scan
+pipx install -e .
+
+# Run commands directly
+migrator scan
 ```
+
+### Troubleshooting
+
+If you encounter issues:
+
+1. Make sure you have the required packages installed:
+   ```bash
+   sudo apt install python3-venv python3-pip python3-distro
+   ```
+
+2. If you get a "command not found" error when running migrator:
+   ```bash
+   # Add ~/.local/bin to your PATH
+   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+
+3. If you have problems with the virtual environment:
+   ```bash
+   # Remove and recreate it
+   rm -rf ~/.venvs/migrator
+   python3 -m venv ~/.venvs/migrator
+   source ~/.venvs/migrator/bin/activate
+   ```
 
 ## Usage
 
