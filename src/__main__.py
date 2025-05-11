@@ -74,6 +74,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Comma-separated list of desktop environments to exclude')
     backup_parser.add_argument('--no-path-variables', action='store_true',
                              help='Disable dynamic path variable substitution for improved portability')
+    backup_parser.add_argument('--no-fstab-portability', action='store_true',
+                             help='Disable selective backup of portable fstab entries')
     
     # Restore command
     restore_parser = subparsers.add_parser('restore', help='Restore system state from backup')
@@ -101,6 +103,13 @@ def setup_argparse() -> argparse.ArgumentParser:
                           help='Disable automatic transformation of paths in config files')
     path_group.add_argument('--path-transform-preview', action='store_true',
                           help='Show what paths would be transformed without making changes')
+    
+    # Fstab options
+    fstab_group = restore_parser.add_argument_group('fstab handling')
+    fstab_group.add_argument('--no-fstab-restore', action='store_true',
+                           help='Skip restoration of portable fstab entries')
+    fstab_group.add_argument('--preview-fstab', action='store_true',
+                           help='Preview portable fstab entries without applying changes')
     
     # Compare command
     compare_parser = subparsers.add_parser('compare', help='Compare current system with backup')
@@ -204,11 +213,17 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     if not use_path_variables:
         print("Dynamic path variable substitution disabled")
     
+    # Handle fstab portability option
+    include_fstab_portability = not args.no_fstab_portability if hasattr(args, 'no_fstab_portability') else True
+    if not include_fstab_portability:
+        print("Portable fstab entries backup disabled")
+    
     # Ensure state is up to date
     app.update_system_state(
         include_desktop=include_desktop,
         desktop_environments=desktop_envs,
-        exclude_desktop=exclude_desktop
+        exclude_desktop=exclude_desktop,
+        include_fstab_portability=include_fstab_portability
     )
     
     # Create backup
@@ -250,6 +265,17 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     else:
         print("Path transformation enabled - system-specific paths will be adapted")
     
+    # Process fstab options
+    restore_fstab = not args.no_fstab_restore if hasattr(args, 'no_fstab_restore') else True
+    preview_fstab = args.preview_fstab if hasattr(args, 'preview_fstab') else False
+    
+    if not restore_fstab:
+        print("Portable fstab entries restoration disabled")
+    elif preview_fstab:
+        print("Portable fstab entries preview mode - no changes will be made")
+    else:
+        print("Portable fstab entries will be appended if available")
+    
     # Restore the state without executing installation
     success = app.restore_from_backup(args.backup_file, execute_plan=False)
     
@@ -274,7 +300,9 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         app.execute_config_restoration(
             args.backup_file,
             transform_paths=transform_paths,
-            preview_only=preview_only
+            preview_only=preview_only,
+            restore_fstab=restore_fstab,
+            preview_fstab=preview_fstab
         )
     
     return 0

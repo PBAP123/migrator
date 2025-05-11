@@ -41,6 +41,7 @@ from config_trackers.desktop_environment import DesktopEnvironmentTracker
 from utils.distro import get_distro_info, DistroInfo
 from utils.config import config
 from utils.sysvar import system_variables, SystemVariables
+from utils.fstab import FstabManager
 
 # Configure logging
 logging.basicConfig(
@@ -182,19 +183,39 @@ class Migrator:
             logger.info(f"Found {len(de_configs)} desktop environment configuration files")
         
         logger.info(f"Total configuration files found: {len(all_configs)}")
+        
+        # Check if we have portable fstab entries
+        if self.system_config_tracker.has_portable_fstab_entries():
+            # Add the fstab data to the portable fstab config file
+            for config in all_configs:
+                if config.path == "/etc/fstab.portable" and config.category == "fstab_portable":
+                    # Get the fstab manager and add its data to the config
+                    fstab_manager = self.system_config_tracker.get_fstab_manager()
+                    if fstab_manager:
+                        # We'll add this data to the config file's dict when serializing
+                        # Save it in the object for now
+                        config.fstab_data = fstab_manager.to_dict()
+                        logger.debug("Added fstab data to portable fstab config")
+        
         return all_configs
     
     def update_system_state(self, include_desktop=True, 
-                           desktop_environments=None, exclude_desktop=None) -> None:
+                           desktop_environments=None, exclude_desktop=None,
+                           include_fstab_portability=True) -> None:
         """Update the system state with current packages and configuration files
         
         Args:
             include_desktop: Whether to include desktop environment configs
             desktop_environments: List of specific desktop environments to include
             exclude_desktop: List of desktop environments to exclude
+            include_fstab_portability: Whether to include portable fstab entries
         """
         # Scan packages
         packages = self.scan_packages()
+        
+        # Set fstab portability flag in system config tracker
+        self.system_config_tracker.include_fstab_portability = include_fstab_portability
+        
         self.state["packages"] = [pkg.to_dict() for pkg in packages]
         
         # Scan configuration files
@@ -203,7 +224,19 @@ class Migrator:
             desktop_environments=desktop_environments,
             exclude_desktop=exclude_desktop
         )
-        self.state["config_files"] = [cfg.to_dict() for cfg in config_files]
+        
+        # Convert configs to dicts with extra data for special cases
+        config_dicts = []
+        for cfg in config_files:
+            cfg_dict = cfg.to_dict()
+            
+            # Add fstab data if available
+            if cfg.path == "/etc/fstab.portable" and hasattr(cfg, 'fstab_data'):
+                cfg_dict["fstab_data"] = cfg.fstab_data
+                
+            config_dicts.append(cfg_dict)
+            
+        self.state["config_files"] = config_dicts
         
         # Save state
         self._save_state()
@@ -436,13 +469,17 @@ class Migrator:
             logger.error(f"Error executing installation plan: {e}")
             return False
     
-    def execute_config_restoration(self, backup_file: str, transform_paths: bool = True, preview_only: bool = False) -> bool:
+    def execute_config_restoration(self, backup_file: str, transform_paths: bool = True, 
+                                  preview_only: bool = False, restore_fstab: bool = True,
+                                  preview_fstab: bool = False) -> bool:
         """Restore configuration files from a backup
         
         Args:
             backup_file: Path to the backup file
             transform_paths: Whether to transform paths to match target system
             preview_only: Only show transformations without making changes
+            restore_fstab: Whether to restore portable fstab entries
+            preview_fstab: Preview fstab changes without applying them
         
         Returns:
             Whether the operation was successful
@@ -497,6 +534,33 @@ class Migrator:
                         logger.info("No path transformations needed - source and target paths match")
             elif not transform_paths:
                 logger.info("Path transformation disabled - paths will be kept as-is")
+            
+            # Check if we have portable fstab entries to restore
+            if restore_fstab:
+                portable_fstab_path = "/etc/fstab.portable"
+                portable_fstab_config = None
+                
+                # Find the portable fstab config if it exists
+                for config in backup_state.get("config_files", []):
+                    if config.get("path") == portable_fstab_path and config.get("category") == "fstab_portable":
+                        portable_fstab_config = config
+                        break
+                
+                # Handle portable fstab entries if found
+                if portable_fstab_config:
+                    logger.info("Found portable fstab entries in backup")
+                    
+                    # Find the data file in the backup
+                    fstab_data_path = os.path.join(configs_dir, portable_fstab_path.lstrip("/"))
+                    
+                    # The portable fstab data might not exist as an actual file in the backup
+                    # Let's check if we have the data in the config file itself
+                    if not os.path.exists(fstab_data_path):
+                        # We need to extract the portable fstab entries from backup_state
+                        # and create a FstabManager with them
+                        self._restore_portable_fstab_entries(backup_state, preview_only or preview_fstab)
+            else:
+                logger.info("Skipping portable fstab entries restoration as requested")
             
             # Generate restoration plan
             plan = self.generate_config_restoration_plan(backup_file)
@@ -587,6 +651,69 @@ class Migrator:
             return True
         except Exception as e:
             logger.error(f"Error executing config restoration: {e}")
+            return False
+    
+    def _restore_portable_fstab_entries(self, backup_state: Dict[str, Any], preview_only: bool = False) -> bool:
+        """Restore portable fstab entries from backup
+        
+        Args:
+            backup_state: The backup state containing config files
+            preview_only: Only show what would be restored without making changes
+            
+        Returns:
+            Whether the operation was successful
+        """
+        try:
+            # Look for the portable fstab entries in the backup state
+            portable_fstab_found = False
+            
+            # The portable fstab entries will be in a special virtual file
+            for config in backup_state.get("config_files", []):
+                if config.get("path") == "/etc/fstab.portable" and config.get("category") == "fstab_portable":
+                    portable_fstab_found = True
+                    
+                    # The content should be in a temporary JSON file in the backup directory
+                    # But we may not have it in the backup, so we need to check
+                    # Look in the state for a "fstab_data" key
+                    for state_config in backup_state.get("config_files", []):
+                        if state_config.get("category") == "fstab_portable" and "fstab_data" in state_config:
+                            fstab_data = state_config.get("fstab_data")
+                            break
+                    else:
+                        # No data found, we'll need to extract it in another way
+                        logger.warning("No portable fstab data found in backup")
+                        return False
+                    
+                    # If we're just previewing, log the entries we would restore
+                    if preview_only:
+                        logger.info("Preview: Would restore the following portable fstab entries:")
+                        for entry_data in fstab_data.get("portable_entries", []):
+                            entry = FstabEntry.from_dict(entry_data)
+                            logger.info(f"  {entry.to_line()}")
+                        return True
+                    
+                    # Create a FstabManager from the data
+                    fstab_manager = FstabManager.from_dict(fstab_data)
+                    
+                    # Append the portable entries to the current fstab
+                    target_fstab = "/etc/fstab"
+                    if os.path.exists(target_fstab) and os.access(target_fstab, os.W_OK):
+                        result = fstab_manager.append_portable_entries(target_fstab)
+                        if result:
+                            logger.info(f"Successfully appended portable fstab entries to {target_fstab}")
+                        else:
+                            logger.error(f"Failed to append portable fstab entries to {target_fstab}")
+                        return result
+                    else:
+                        logger.error(f"Target fstab file {target_fstab} does not exist or is not writable")
+                        return False
+            
+            if not portable_fstab_found:
+                logger.info("No portable fstab entries found in backup")
+                return True  # Not an error, just nothing to do
+                
+        except Exception as e:
+            logger.error(f"Error restoring portable fstab entries: {e}")
             return False
     
     def compare_with_backup(self, backup_file: str) -> Tuple[List[Dict], List[Dict], List[Dict], List[Dict]]:

@@ -41,6 +41,26 @@ class ConfigFile:
             logger.warning(f"Could not calculate checksum for {self.path}: {e}")
             return None
     
+    def _calculate_checksum_from_data(self, data: bytes) -> Optional[str]:
+        """Calculate a checksum from provided data instead of reading the file
+        
+        This is useful for virtual files or specially processed content.
+        
+        Args:
+            data: The binary data to calculate checksum from
+        
+        Returns:
+            MD5 checksum of the data
+        """
+        try:
+            hash_md5 = hashlib.md5()
+            hash_md5.update(data)
+            self.checksum = hash_md5.hexdigest()
+            return self.checksum
+        except Exception as e:
+            logger.warning(f"Could not calculate checksum from data for {self.path}: {e}")
+            return None
+    
     def _get_last_modified(self) -> Optional[datetime]:
         """Get the last modified time of the file"""
         if not os.path.exists(self.path):

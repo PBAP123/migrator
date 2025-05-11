@@ -6,9 +6,11 @@ System configuration tracker for system-wide configuration files
 import os
 import glob
 import logging
+import json
 from typing import List, Dict, Any, Optional, Set
 
 from .base import ConfigTracker, ConfigFile
+from utils.fstab import FstabManager, FstabEntry
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,10 @@ class SystemConfigTracker(ConfigTracker):
     def __init__(self):
         super().__init__("system_config")
         self.tracked_files: Dict[str, ConfigFile] = {}
+        self.fstab_manager = None  # Will be initialized during scanning
+        self.portable_fstab_entries = []  # Store portable fstab entries
+        self.include_fstab_portability = True  # Flag to control fstab processing
+        
         self.config_dirs = [
             "/etc",
             "/usr/local/etc"
@@ -74,8 +80,27 @@ class SystemConfigTracker(ConfigTracker):
         """Find system configuration files to track"""
         config_files = []
         
+        # Handle fstab specially for portability
+        if self.include_fstab_portability:
+            self._process_fstab_entries()
+        else:
+            logger.info("Skipping portable fstab entries detection (disabled by user)")
+            
+            # Instead, track the regular fstab file
+            fstab_path = "/etc/fstab"
+            if os.path.isfile(fstab_path) and os.access(fstab_path, os.R_OK):
+                # Create config file object
+                config = self._create_config_file(fstab_path)
+                if config:
+                    config_files.append(config)
+                    self.tracked_files[config.path] = config
+        
         # Expand globs and find files
         for pattern in self.important_configs:
+            # Skip fstab as we handle it separately
+            if pattern == "/etc/fstab":
+                continue
+                
             if "*" in pattern:
                 try:
                     for file_path in glob.glob(pattern):
@@ -96,6 +121,73 @@ class SystemConfigTracker(ConfigTracker):
                         self.tracked_files[config.path] = config
         
         return config_files
+    
+    def _process_fstab_entries(self) -> None:
+        """Process fstab to extract portable entries"""
+        fstab_path = "/etc/fstab"
+        
+        # Check if fstab exists and is readable
+        if os.path.exists(fstab_path) and os.access(fstab_path, os.R_OK):
+            self.fstab_manager = FstabManager(fstab_path)
+            
+            # Get portable entries
+            self.portable_fstab_entries = self.fstab_manager.get_portable_entries()
+            
+            if self.portable_fstab_entries:
+                # Create a special config file for portable fstab entries
+                portable_fstab_path = "/etc/fstab.portable"
+                
+                # Store portable entries in a special format
+                portable_content = "\n".join([entry.to_line() for entry in self.portable_fstab_entries])
+                portable_fstab_data = {
+                    "fstab_path": fstab_path,
+                    "portable_entries": [entry.to_dict() for entry in self.portable_fstab_entries]
+                }
+                
+                # Create a temporary file to get a checksum
+                temp_path = os.path.join('/tmp', 'migrator_fstab_portable')
+                with open(temp_path, 'w') as f:
+                    json.dump(portable_fstab_data, f, indent=2)
+                
+                # Create a ConfigFile object with special metadata
+                config = ConfigFile(
+                    path=portable_fstab_path,  # Virtual path
+                    description=f"Portable fstab entries ({len(self.portable_fstab_entries)} entries)",
+                    category="fstab_portable",
+                    is_system_config=True
+                )
+                
+                # Set the content to the JSON data
+                with open(temp_path, 'rb') as f:
+                    file_contents = f.read()
+                    config._calculate_checksum_from_data(file_contents)
+                
+                # Add to tracked files
+                self.tracked_files[portable_fstab_path] = config
+                
+                # Remove the temporary file
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                
+                logger.info(f"Processed fstab and found {len(self.portable_fstab_entries)} portable entries")
+            else:
+                logger.info("No portable fstab entries found")
+        else:
+            logger.info(f"Fstab file {fstab_path} does not exist or is not readable")
+    
+    def get_portable_fstab_entries(self) -> List[FstabEntry]:
+        """Get the portable fstab entries"""
+        return self.portable_fstab_entries
+    
+    def get_fstab_manager(self) -> Optional[FstabManager]:
+        """Get the fstab manager"""
+        return self.fstab_manager
+    
+    def has_portable_fstab_entries(self) -> bool:
+        """Check if there are portable fstab entries"""
+        return len(self.portable_fstab_entries) > 0
     
     def _create_config_file(self, path: str) -> Optional[ConfigFile]:
         """Create a ConfigFile object with appropriate metadata"""

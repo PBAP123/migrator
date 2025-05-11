@@ -49,6 +49,10 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Automatically detects usernames and home directory paths during backup
   - Adapts paths to match the target system during restoration
   - Makes configuration files portable across different systems
+- **Selective Fstab Entry Backup**: Smart handling of mount entries:
+  - Analyzes /etc/fstab during backup and identifies portable entries
+  - Only backs up entries for network shares, special filesystems and non-hardware-specific mounts
+  - Ensures hardware-dependent entries aren't transferred between systems
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
 - **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
@@ -260,6 +264,12 @@ migrator backup ~/backups
 # Backup without path variable substitution
 migrator backup ~/backups --no-path-variables
 
+# Backup with selective fstab entry handling (enabled by default)
+migrator backup ~/backups
+
+# Backup without portable fstab entries
+migrator backup ~/backups --no-fstab-portability
+
 # View or modify the default backup location
 migrator config get-backup-dir  # Show current backup directory
 migrator config set-backup-dir /path/to/backup  # Set a new default backup location
@@ -290,6 +300,15 @@ migrator restore backup.json --execute --version-policy=always-newest  # Always 
 
 # Allow downgrading packages if needed (when available versions are older than backup)
 migrator restore backup.json --execute --allow-downgrade
+
+# Restore with fstab entry appending (enabled by default)
+migrator restore ~/backups/migrator_backup_20230101_120000.json --execute
+
+# Restore without appending fstab entries
+migrator restore ~/backups/migrator_backup_20230101_120000.json --execute --no-fstab-restore
+
+# Preview portable fstab entries without applying them
+migrator restore ~/backups/migrator_backup_20230101_120000.json --preview-fstab
 
 # Compare the current system with a backup
 migrator compare ~/backups/migrator_backup_20230101_120000.json
