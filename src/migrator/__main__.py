@@ -140,8 +140,26 @@ def setup_argparse() -> argparse.ArgumentParser:
     # Install service command
     install_service_parser = subparsers.add_parser('install-service', 
                                                  help='Install Migrator as a systemd service')
-    install_service_parser.add_argument('--interval', '-i', type=int, default=86400,
-                                      help='Interval between checks in seconds (default: 86400 - once per day)')
+    
+    # Create a scheduling option group so users choose EITHER interval OR schedule
+    schedule_group = install_service_parser.add_mutually_exclusive_group()
+    
+    schedule_group.add_argument('--interval', '-i', type=int, default=86400,
+                              help='Interval between checks in seconds (default: 86400 - once per day)')
+    
+    schedule_group.add_argument('--schedule', '-s', 
+                              help='Systemd timer schedule (e.g., "daily", "weekly", "Mon *-*-* 14:30:00"). '
+                                   'For time of day, use "hourly", "daily@3:00", "Sun 14:30", etc.')
+    
+    schedule_group.add_argument('--daily', type=str, metavar='HH:MM',
+                              help='Run daily at specified time (24-hour format, e.g. "14:30")')
+    
+    schedule_group.add_argument('--weekly', type=str, metavar='DAY,HH:MM',
+                              help='Run weekly on specified day and time (e.g., "Mon,09:00")')
+    
+    schedule_group.add_argument('--monthly', type=str, metavar='DAY,HH:MM',
+                              help='Run monthly on specified day and time (e.g., "1,00:30" for 1st day of month)')
+    
     install_service_parser.add_argument('--user', action='store_true',
                                       help='Install as a user service instead of system-wide')
     
@@ -574,10 +592,67 @@ def handle_service(app: Migrator, args: argparse.Namespace) -> int:
 def handle_install_service(app: Migrator, args: argparse.Namespace) -> int:
     """Handle install-service command"""
     print("Installing Migrator as a systemd service...")
+
+    # Process schedule options to translate them into systemd timer syntax
+    schedule = None
     
+    if hasattr(args, 'daily') and args.daily:
+        # Format: "daily@HH:MM:00"
+        time = args.daily.strip()
+        if ":" not in time:
+            print("Error: Invalid time format for daily schedule. Use HH:MM format.")
+            return 1
+        schedule = f"*-*-* {time}:00"
+    
+    elif hasattr(args, 'weekly') and args.weekly:
+        # Format: "DAY,HH:MM" -> "DAY *-*-* HH:MM:00"
+        try:
+            day, time = args.weekly.split(',')
+            day = day.strip().capitalize()
+            time = time.strip()
+            
+            # Validate day
+            valid_days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+            if day not in valid_days:
+                print(f"Error: Invalid day '{day}'. Use one of: {', '.join(valid_days)}")
+                return 1
+                
+            schedule = f"{day} *-*-* {time}:00"
+        except ValueError:
+            print("Error: Invalid format for weekly schedule. Use DAY,HH:MM format.")
+            return 1
+    
+    elif hasattr(args, 'monthly') and args.monthly:
+        # Format: "DAY,HH:MM" -> "*-*-DAY HH:MM:00"
+        try:
+            day, time = args.monthly.split(',')
+            day = day.strip()
+            time = time.strip()
+            
+            # Validate day
+            try:
+                day_num = int(day)
+                if day_num < 1 or day_num > 31:
+                    print(f"Error: Invalid day of month '{day}'. Use a value between 1 and 28 to ensure it works in all months.")
+                    return 1
+            except ValueError:
+                print(f"Error: Invalid day of month '{day}'. Use a number between 1 and 28.")
+                return 1
+                
+            schedule = f"*-*-{day} {time}:00"
+        except ValueError:
+            print("Error: Invalid format for monthly schedule. Use DAY,HH:MM format.")
+            return 1
+    
+    elif hasattr(args, 'schedule') and args.schedule:
+        # Direct systemd timer specification
+        schedule = args.schedule
+    
+    # Call the service creation function
     success, message = create_systemd_service(
-        check_interval=args.interval,
-        user_unit=args.user
+        check_interval=args.interval if not schedule else None,
+        user_unit=args.user,
+        schedule=schedule
     )
     
     if success:

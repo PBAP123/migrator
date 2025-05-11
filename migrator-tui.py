@@ -466,13 +466,16 @@ Press the corresponding number key to select an option.
 │  2. [2] Install as user service                       │
 │     No sudo needed, runs for current user only        │
 │                                                       │
-│  3. [3] Remove existing service                       │
+│  3. [3] Install with advanced scheduling              │
+│     Set specific times for service to run             │
+│                                                       │
+│  4. [4] Remove existing service                       │
 │     Uninstall the current service                     │
 │                                                       │
-│  4. [4] View service status                           │
+│  5. [5] View service status                           │
 │     Check if the service is running                   │
 │                                                       │
-│  5. [5] Start/restart service                         │
+│  6. [6] Start/restart service                         │
 │     Start or restart the service                      │
 │                                                       │
 ╰───────────────────────────────────────────────────────╯
@@ -485,9 +488,10 @@ Press the corresponding number key to select an option.
         # Set up key bindings
         self.root.add_key_command(ord('1'), lambda: self.install_service(user=False))
         self.root.add_key_command(ord('2'), lambda: self.install_service(user=True))
-        self.root.add_key_command(ord('3'), self.remove_service)
-        self.root.add_key_command(ord('4'), self.check_service_status)
-        self.root.add_key_command(ord('5'), self.restart_service)
+        self.root.add_key_command(ord('3'), self.show_service_scheduling)
+        self.root.add_key_command(ord('4'), self.remove_service)
+        self.root.add_key_command(ord('5'), self.check_service_status)
+        self.root.add_key_command(ord('6'), self.restart_service)
     
     def show_help_screen(self):
         """Show help and about information"""
@@ -891,6 +895,91 @@ Package Sources:
         
         self.output_panel.set_text("Migrator installed successfully! You can now use the migrator command.")
         self.refresh_system_info()
+    
+    def show_service_scheduling(self):
+        """Show advanced service scheduling options"""
+        popup = self.root.create_popup('Service Scheduling', 10, 70)
+        
+        # Information text
+        text = popup.add_text_block('Info', 0, 0, row_span=2, column_span=2)
+        text.set_text("""
+Select when you want the Migrator service to run:
+        """)
+        
+        # Scheduling type selection
+        schedule_group = popup.add_radio_button_group('Schedule Type', 2, 0, row_span=4, column_span=1)
+        schedule_group.add_item("Once per day (default)", value=0, selected=True)
+        schedule_group.add_item("Daily at specific time", value=1)
+        schedule_group.add_item("Weekly at specific time", value=2)
+        schedule_group.add_item("Monthly on specific day", value=3)
+        
+        # Options panel
+        options_panel = popup.add_form('Options', 2, 1, row_span=4, column_span=1)
+        
+        # Daily time input
+        options_panel.add_field('Daily time (HH:MM):', 1)
+        
+        # Weekly options input
+        options_panel.add_field('Weekly day (Mon,Tue,Wed,Thu,Fri,Sat,Sun):', 2)
+        options_panel.add_field('Weekly time (HH:MM):', 3)
+        
+        # Monthly options input
+        options_panel.add_field('Monthly day (1-28):', 4)
+        options_panel.add_field('Monthly time (HH:MM):', 5)
+        
+        # Set default values
+        options_panel.set_field_value(1, "03:00")  # 3 AM default
+        options_panel.set_field_value(2, "Sun")    # Sunday default
+        options_panel.set_field_value(3, "03:00")  # 3 AM default
+        options_panel.set_field_value(4, "1")      # 1st of month default
+        options_panel.set_field_value(5, "03:00")  # 3 AM default
+        
+        # User or system service checkbox
+        user_checkbox = popup.add_checkbox("Install as user service (no sudo needed)", 7, 0, column_span=2, checked=True)
+        
+        # Create buttons
+        install_btn = popup.add_button('Install Service', 8, 0, column_span=1)
+        cancel_btn = popup.add_button('Cancel', 8, 1, column_span=1)
+        
+        # Set handlers
+        def on_install():
+            schedule_type = schedule_group.get_selected_item_index()
+            user_service = user_checkbox.is_checked()
+            
+            # Build command based on selected options
+            cmd = "migrator install-service"
+            
+            if user_service:
+                cmd += " --user"
+            
+            if schedule_type == 0:
+                # Default daily, no additional arguments needed
+                pass
+            elif schedule_type == 1:
+                # Daily at specific time
+                daily_time = options_panel.get_field_value(1)
+                cmd += f" --daily \"{daily_time}\""
+            elif schedule_type == 2:
+                # Weekly
+                weekly_day = options_panel.get_field_value(2)
+                weekly_time = options_panel.get_field_value(3)
+                cmd += f" --weekly \"{weekly_day},{weekly_time}\""
+            elif schedule_type == 3:
+                # Monthly
+                monthly_day = options_panel.get_field_value(4)
+                monthly_time = options_panel.get_field_value(5)
+                cmd += f" --monthly \"{monthly_day},{monthly_time}\""
+            
+            # Run the command
+            self.root.stop_popup()
+            self.run_command(cmd)
+            self.refresh_system_info()
+        
+        install_btn.command = on_install
+        cancel_btn.command = lambda: self.root.stop_popup()
+        
+        # Show the popup
+        self.root.show_popup(popup)
     
     def install_service(self, user=False):
         """Install Migrator as a service"""

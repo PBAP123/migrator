@@ -64,6 +64,10 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
 - **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
 - **Service Management**: Run as a background service with automatic checks.
+  - Run as a system-wide or user service
+  - Schedule service based on specific times of day
+  - Configure daily, weekly, or monthly execution
+  - Use advanced systemd timer scheduling
 - **Interactive Progress Tracking**: Real-time visual feedback for all operations:
   - Progress bars show overall completion percentage
   - Live status updates for what's currently being processed
@@ -291,6 +295,10 @@ The TUI provides access to all Migrator functionality through an intuitive inter
 - **Backups**: Create and manage backups
 - **Compare/Restore**: Compare changes and restore from backups
 - **Service Management**: Install and manage Migrator as a service
+  - Install as system or user service
+  - Configure advanced scheduling options (daily, weekly, monthly)
+  - Monitor service status
+  - Start/restart services
 
 #### TUI Dependencies
 
@@ -489,6 +497,14 @@ migrator install-service --user
 
 # Customize the check interval (e.g., every 12 hours)
 migrator install-service --interval 43200
+
+# Schedule the service to run at specific times
+migrator install-service --daily "14:30"      # Run daily at 2:30 PM
+migrator install-service --weekly "Mon,09:00" # Run weekly on Monday at 9:00 AM
+migrator install-service --monthly "1,00:30"  # Run monthly on the 1st day at 00:30 AM
+
+# Use advanced systemd timer syntax for custom schedules
+migrator install-service --schedule "Sat,Sun *-*-* 22:00:00" # Weekends at 10 PM
 ```
 
 The installer will:
@@ -497,6 +513,17 @@ The installer will:
 3. Enable and start the service (with your permission)
 
 Once installed as a service, Migrator will run completely automatically in the background with no need for manual intervention.
+
+#### Advanced Scheduling Options
+
+Migrator uses systemd timers to provide precise scheduling control:
+
+- **Daily scheduling**: Run at a specific time each day (e.g., "03:00" for 3 AM)
+- **Weekly scheduling**: Run on a specific day and time (e.g., "Sun,23:30" for Sunday at 11:30 PM)
+- **Monthly scheduling**: Run on a specific day of each month (e.g., "15,12:00" for 15th day at noon)
+- **Custom schedules**: Use full systemd timer syntax for complex scheduling needs
+
+All scheduling options are available through both the command line interface and the TUI's advanced service scheduling screen.
 
 #### Managing the Service
 
