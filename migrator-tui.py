@@ -36,10 +36,17 @@ except ImportError:
     import py_cui
     import distro
 
+# Import the config module
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+try:
+    from utils.config import config
+except ImportError:
+    print("Could not import config module, falling back to defaults")
+    config = None
+
 # Migrator paths and constants
 VENV_PATH = os.path.expanduser("~/.venvs/migrator")
 WRAPPER_PATH = os.path.expanduser("~/.local/bin/migrator")
-DEFAULT_BACKUP_DIR = os.path.expanduser("~/migrator_backups")
 DATA_DIR = os.path.expanduser("~/.local/share/migrator")
 STATE_FILE = os.path.join(DATA_DIR, "system_state.json")
 LOG_FILE = os.path.join(DATA_DIR, "migrator.log")
@@ -209,12 +216,15 @@ class MigratorTui:
         self.state_file_exists = os.path.exists(STATE_FILE)
         self.log_file_exists = os.path.exists(LOG_FILE)
         
+        # Get backup dir from config
+        self.backup_dir = self.get_backup_dir()
+        
         # Get backup info
-        if not os.path.exists(DEFAULT_BACKUP_DIR):
+        if not os.path.exists(self.backup_dir):
             self.backup_count = 0
             self.latest_backup = None
         else:
-            backups = [f for f in os.listdir(DEFAULT_BACKUP_DIR) if f.startswith('migrator_backup_') and f.endswith('.json')]
+            backups = [f for f in os.listdir(self.backup_dir) if f.startswith('migrator_backup_') and f.endswith('.json')]
             self.backup_count = len(backups)
             if backups:
                 # Sort by timestamp in filename
@@ -335,13 +345,15 @@ Press the corresponding number key to select an option.
     
     def show_backup_screen(self):
         """Show backup options"""
-        if not os.path.exists(DEFAULT_BACKUP_DIR):
-            os.makedirs(DEFAULT_BACKUP_DIR, exist_ok=True)
+        # Ensure backup directory exists
+        backup_dir = self.get_backup_dir()
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir, exist_ok=True)
             
         # Get backup list
         backups = []
-        if os.path.exists(DEFAULT_BACKUP_DIR):
-            backups = [f for f in os.listdir(DEFAULT_BACKUP_DIR) if f.startswith('migrator_backup_') and f.endswith('.json')]
+        if os.path.exists(backup_dir):
+            backups = [f for f in os.listdir(backup_dir) if f.startswith('migrator_backup_') and f.endswith('.json')]
             backups.sort(reverse=True)  # Most recent first
         
         backup_list = "\n".join(backups) if backups else "No backups found"
@@ -351,7 +363,7 @@ Press the corresponding number key to select an option.
 │                                                      │
 │  Backup Status:                                      │
 │  • Total backups: {len(backups)}                                    │
-│  • Backup location: {DEFAULT_BACKUP_DIR}              │
+│  • Backup location: {backup_dir}              │
 │                                                      │
 │  Available Backup Options:                           │
 │                                                      │
@@ -363,6 +375,9 @@ Press the corresponding number key to select an option.
 │                                                      │
 │  3. [3] Delete all backups                           │
 │     Clear the backup directory                       │
+│                                                      │
+│  4. [4] Change backup location                       │
+│     Set a different backup directory                 │
 │                                                      │
 │  Recent Backups:                                     │
 │  {backup_list[:200] + '...' if len(backup_list) > 200 else backup_list}    │
@@ -378,13 +393,15 @@ Press the corresponding number key to select an option.
         self.root.add_key_command(ord('1'), self.prompt_backup)
         self.root.add_key_command(ord('2'), self.show_backup_list)
         self.root.add_key_command(ord('3'), self.confirm_delete_backups)
+        self.root.add_key_command(ord('4'), self.prompt_change_backup_dir)
     
     def show_compare_screen(self):
         """Show compare and restore options"""
         # Get backup list
+        backup_dir = self.get_backup_dir()
         backups = []
-        if os.path.exists(DEFAULT_BACKUP_DIR):
-            backups = [f for f in os.listdir(DEFAULT_BACKUP_DIR) if f.startswith('migrator_backup_') and f.endswith('.json')]
+        if os.path.exists(backup_dir):
+            backups = [f for f in os.listdir(backup_dir) if f.startswith('migrator_backup_') and f.endswith('.json')]
             backups.sort(reverse=True)  # Most recent first
         
         if not backups:
@@ -510,24 +527,55 @@ Press the corresponding number key to select an option.
         """Prompt for backup location"""
         self.root.show_text_box_popup(
             "Backup Directory",
-            "Enter backup directory (default: ~/migrator_backups):",
+            f"Enter backup directory (default: {self.get_backup_dir()}):",
             self.create_backup
         )
     
     def create_backup(self, backup_dir):
         """Create a backup"""
         if not backup_dir.strip():
-            backup_dir = DEFAULT_BACKUP_DIR
+            backup_dir = self.get_backup_dir()
         
         os.makedirs(backup_dir, exist_ok=True)
         self.run_migrator_command(f"backup {backup_dir}")
     
+    def prompt_change_backup_dir(self):
+        """Prompt for changing the default backup directory"""
+        self.root.show_text_box_popup(
+            "Change Backup Directory",
+            f"Enter new default backup directory (current: {self.get_backup_dir()}):",
+            self.change_backup_dir
+        )
+    
+    def change_backup_dir(self, new_backup_dir):
+        """Change the default backup directory"""
+        if not new_backup_dir.strip():
+            self.output_panel.set_text("No directory specified. Keeping current backup directory.")
+            return
+            
+        new_backup_dir = os.path.expanduser(new_backup_dir)
+        self.run_migrator_command(f"config set-backup-dir {new_backup_dir}")
+        
+        # Refresh to show the new backup directory
+        self.refresh_system_info()
+        self.show_backup_screen()
+    
+    def get_backup_dir(self) -> str:
+        """Get the configured backup directory"""
+        # Try to use config module if available
+        if config:
+            return config.get_backup_dir()
+        else:
+            # Fallback to hardcoded default
+            return os.path.expanduser("~/migrator_backups")
+    
     def select_backup_for(self, action):
         """Show backup selection popup for an action"""
         # Get backup list
+        backup_dir = self.get_backup_dir()
         backups = []
-        if os.path.exists(DEFAULT_BACKUP_DIR):
-            backups = [f for f in os.listdir(DEFAULT_BACKUP_DIR) if f.startswith('migrator_backup_') and f.endswith('.json')]
+        if os.path.exists(backup_dir):
+            backups = [f for f in os.listdir(backup_dir) if f.startswith('migrator_backup_') and f.endswith('.json')]
             backups.sort(reverse=True)  # Most recent first
         
         if not backups:
@@ -542,22 +590,23 @@ Press the corresponding number key to select an option.
         # Set action handler
         if action == "compare":
             menu.add_key_command(py_cui.keys.KEY_ENTER, 
-                                lambda: self.run_compare(os.path.join(DEFAULT_BACKUP_DIR, menu.get())))
+                                lambda: self.run_compare(os.path.join(backup_dir, menu.get())))
         elif action == "plan":
             menu.add_key_command(py_cui.keys.KEY_ENTER, 
-                                lambda: self.run_plan(os.path.join(DEFAULT_BACKUP_DIR, menu.get())))
+                                lambda: self.run_plan(os.path.join(backup_dir, menu.get())))
         elif action == "restore":
             menu.add_key_command(py_cui.keys.KEY_ENTER, 
-                                lambda: self.run_restore(os.path.join(DEFAULT_BACKUP_DIR, menu.get())))
+                                lambda: self.run_restore(os.path.join(backup_dir, menu.get())))
         
         self.root.show_popup(popup)
     
     def show_backup_list(self):
         """Show list of backups"""
         # Get backup list
+        backup_dir = self.get_backup_dir()
         backups = []
-        if os.path.exists(DEFAULT_BACKUP_DIR):
-            backups = [f for f in os.listdir(DEFAULT_BACKUP_DIR) if f.startswith('migrator_backup_') and f.endswith('.json')]
+        if os.path.exists(backup_dir):
+            backups = [f for f in os.listdir(backup_dir) if f.startswith('migrator_backup_') and f.endswith('.json')]
             backups.sort(reverse=True)  # Most recent first
         
         if not backups:
@@ -584,15 +633,15 @@ Select a backup and press:
         
         # Set handlers
         menu.add_key_command(py_cui.keys.KEY_ENTER, 
-                            lambda: self.view_backup_details(os.path.join(DEFAULT_BACKUP_DIR, menu.get())))
+                            lambda: self.view_backup_details(os.path.join(backup_dir, menu.get())))
         menu.add_key_command(ord('c'), 
-                            lambda: self.run_compare(os.path.join(DEFAULT_BACKUP_DIR, menu.get())))
+                            lambda: self.run_compare(os.path.join(backup_dir, menu.get())))
         menu.add_key_command(ord('r'), 
-                            lambda: self.run_restore(os.path.join(DEFAULT_BACKUP_DIR, menu.get())))
+                            lambda: self.run_restore(os.path.join(backup_dir, menu.get())))
         menu.add_key_command(ord('p'), 
-                            lambda: self.run_plan(os.path.join(DEFAULT_BACKUP_DIR, menu.get())))
+                            lambda: self.run_plan(os.path.join(backup_dir, menu.get())))
         menu.add_key_command(ord('d'), 
-                            lambda: self.delete_backup(os.path.join(DEFAULT_BACKUP_DIR, menu.get())))
+                            lambda: self.delete_backup(os.path.join(backup_dir, menu.get())))
         
         self.root.show_popup(popup)
     
@@ -600,17 +649,18 @@ Select a backup and press:
         """Confirm deletion of all backups"""
         self.root.show_yes_no_popup(
             "Confirm Delete",
-            "Are you sure you want to delete ALL backups?",
+            f"Are you sure you want to delete ALL backups in {self.get_backup_dir()}?",
             self.delete_all_backups
         )
     
     def delete_all_backups(self, confirmed):
         """Delete all backups"""
         if confirmed:
-            if os.path.exists(DEFAULT_BACKUP_DIR):
-                backups = [f for f in os.listdir(DEFAULT_BACKUP_DIR) if f.startswith('migrator_backup_') and f.endswith('.json')]
+            backup_dir = self.get_backup_dir()
+            if os.path.exists(backup_dir):
+                backups = [f for f in os.listdir(backup_dir) if f.startswith('migrator_backup_') and f.endswith('.json')]
                 for backup in backups:
-                    os.remove(os.path.join(DEFAULT_BACKUP_DIR, backup))
+                    os.remove(os.path.join(backup_dir, backup))
                 self.output_panel.set_text(f"Deleted {len(backups)} backups.")
                 self.refresh_dashboard()
             else:

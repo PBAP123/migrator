@@ -41,6 +41,10 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Common window managers (i3, awesome, bspwm, etc.)
   - Hardware-independent configurations only
 - **Incremental Backup**: Monitors changes to packages and configurations over time.
+- **Custom Backup Destinations**: Choose where your backups are stored:
+  - Define any local folder or network share as your backup location
+  - Configuration persists between sessions
+  - TUI interface for easy management
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
 - **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
@@ -249,6 +253,13 @@ migrator scan
 # Backup the current system state to a directory
 migrator backup ~/backups
 
+# View or modify the default backup location
+migrator config get-backup-dir  # Show current backup directory
+migrator config set-backup-dir /path/to/backup  # Set a new default backup location
+
+# Create a backup using the default location (no path needed)
+migrator backup
+
 # Restore the system state from a backup file
 migrator restore ~/backups/migrator_backup_20230101_120000.json
 
@@ -399,12 +410,29 @@ crontab -e
 
 ## Data Storage
 
-Migrator stores its data in `~/.local/share/migrator/`:
+Migrator stores its data in:
 
-- `system_state.json`: The current system state
-- `migrator.log`: Log file
+- `~/.local/share/migrator/`: Application data
+  - `system_state.json`: The current system state
+  - `migrator.log`: Log file
+- `~/.config/migrator/`: Configuration files
+  - `config.json`: User preferences including backup location
 
-Backups are stored in `~/migrator_backups/` by default, but this can be customized.
+Backups are stored in `~/migrator_backups/` by default, but this can be customized using the command line or TUI:
+
+```bash
+# Change the default backup location
+migrator config set-backup-dir /mnt/network_share/backups
+
+# View the current backup location
+migrator config get-backup-dir
+```
+
+You can set any writable location as your backup destination, including:
+- Local directories
+- External drives
+- Network shares
+- NAS locations
 
 ## License
 

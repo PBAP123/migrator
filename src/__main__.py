@@ -47,6 +47,8 @@ def setup_argparse() -> argparse.ArgumentParser:
               migrator compare backup.json # Compare current system with backup
               migrator plan backup.json   # Generate installation plan from backup
               migrator install-service    # Install as a systemd service
+              migrator config get-backup-dir  # Display the current backup directory
+              migrator config set-backup-dir PATH  # Set a new backup directory
         """)
     )
     
@@ -126,6 +128,19 @@ def setup_argparse() -> argparse.ArgumentParser:
                                                 help='Remove Migrator systemd service')
     remove_service_parser.add_argument('--user', action='store_true',
                                      help='Remove user service instead of system-wide')
+    
+    # Config command
+    config_parser = subparsers.add_parser('config', help='Configure Migrator settings')
+    config_subparsers = config_parser.add_subparsers(dest='subcommand', help='Configuration command')
+    
+    # Get backup directory command
+    get_backup_dir_parser = config_subparsers.add_parser('get-backup-dir', 
+                                                      help='Get the current backup directory')
+    
+    # Set backup directory command
+    set_backup_dir_parser = config_subparsers.add_parser('set-backup-dir', 
+                                                      help='Set the backup directory')
+    set_backup_dir_parser.add_argument('backup_dir', help='Path to the backup directory')
     
     return parser
 
@@ -395,6 +410,36 @@ def handle_remove_service(app: Migrator, args: argparse.Namespace) -> int:
         print(f"Error: {message}")
         return 1
 
+def handle_config(app: Migrator, args: argparse.Namespace) -> int:
+    """Handle config command"""
+    if not hasattr(args, 'subcommand') or not args.subcommand:
+        print("Error: No configuration subcommand specified")
+        return 1
+        
+    if args.subcommand == 'get-backup-dir':
+        backup_dir = app.get_backup_dir()
+        print(f"Current backup directory: {backup_dir}")
+        return 0
+        
+    elif args.subcommand == 'set-backup-dir':
+        if not hasattr(args, 'backup_dir') or not args.backup_dir:
+            print("Error: No backup directory specified")
+            return 1
+            
+        backup_dir = os.path.expanduser(args.backup_dir)
+        success = app.set_backup_dir(backup_dir)
+        
+        if success:
+            print(f"Backup directory set to: {backup_dir}")
+            return 0
+        else:
+            print(f"Failed to set backup directory to: {backup_dir}")
+            return 1
+            
+    else:
+        print(f"Unknown configuration subcommand: {args.subcommand}")
+        return 1
+
 def main() -> int:
     """Main CLI entry point"""
     parser = setup_argparse()
@@ -417,7 +462,8 @@ def main() -> int:
         'check': handle_check,
         'service': handle_service,
         'install-service': handle_install_service,
-        'remove-service': handle_remove_service
+        'remove-service': handle_remove_service,
+        'config': handle_config
     }
     
     handler = command_handlers.get(args.command)

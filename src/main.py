@@ -39,6 +39,7 @@ from config_trackers.desktop_environment import DesktopEnvironmentTracker
 
 # Import utilities
 from utils.distro import get_distro_info, DistroInfo
+from utils.config import config
 
 # Configure logging
 logging.basicConfig(
@@ -78,6 +79,11 @@ class Migrator:
         # Load or initialize the system state
         self.state_file = os.path.join(self.data_dir, "system_state.json")
         self.state = self._load_state()
+        
+        # Ensure backup directory exists
+        backup_dir = config.get_backup_dir()
+        os.makedirs(backup_dir, exist_ok=True)
+        logger.info(f"Using backup directory: {backup_dir}")
     
     def _load_state(self) -> Dict[str, Any]:
         """Load the system state from disk or initialize a new one"""
@@ -197,8 +203,16 @@ class Migrator:
         # Save state
         self._save_state()
     
-    def backup_state(self, backup_dir: str) -> str:
-        """Backup the current system state to a specified directory"""
+    def backup_state(self, backup_dir: Optional[str] = None) -> str:
+        """Backup the current system state to a specified directory
+        
+        Args:
+            backup_dir: Path to the backup directory, or None to use the configured directory
+        """
+        # Use configured backup directory if none is specified
+        if backup_dir is None:
+            backup_dir = config.get_backup_dir()
+            
         os.makedirs(backup_dir, exist_ok=True)
         
         # Create a timestamped backup file
@@ -218,8 +232,8 @@ class Migrator:
             
             # Copy all config files
             config_count = 0
-            for config in self.state.get("config_files", []):
-                path = config["path"]
+            for config_file in self.state.get("config_files", []):
+                path = config_file["path"]
                 if os.path.exists(path) and os.access(path, os.R_OK):
                     # Create relative path structure
                     relative_path = path.lstrip("/")
@@ -779,3 +793,46 @@ class Migrator:
         self.update_system_state()
         
         return added_packages + removed_packages, changed_configs
+
+    def get_default_backup_file(self) -> Optional[str]:
+        """Get the most recent backup file from the configured backup directory
+        
+        Returns:
+            Path to the most recent backup file, or None if no backups exist
+        """
+        backup_dir = config.get_backup_dir()
+        if not os.path.exists(backup_dir):
+            return None
+            
+        # Find all backup files
+        backup_files = [
+            os.path.join(backup_dir, f) 
+            for f in os.listdir(backup_dir) 
+            if f.startswith('migrator_backup_') and f.endswith('.json')
+        ]
+        
+        if not backup_files:
+            return None
+            
+        # Sort by modification time (newest first)
+        backup_files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+        return backup_files[0]
+        
+    def set_backup_dir(self, backup_dir: str) -> bool:
+        """Set the default backup directory
+        
+        Args:
+            backup_dir: Path to the backup directory
+            
+        Returns:
+            Whether the operation was successful
+        """
+        return config.set_backup_dir(backup_dir)
+        
+    def get_backup_dir(self) -> str:
+        """Get the configured backup directory
+        
+        Returns:
+            Path to the configured backup directory
+        """
+        return config.get_backup_dir()
