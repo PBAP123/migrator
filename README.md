@@ -211,6 +211,33 @@ The TUI provides access to all Migrator functionality through an intuitive inter
 - **Compare/Restore**: Compare changes and restore from backups
 - **Service Management**: Install and manage Migrator as a service
 
+#### TUI Dependencies
+
+To use the Terminal User Interface, you'll need additional dependencies:
+
+```bash
+# Install from requirements
+pip install py_cui
+
+# Or directly in your system (not recommended)
+sudo apt install python3-py-cui  # Debian/Ubuntu
+```
+
+#### Running the TUI Without Installation
+
+The TUI can run Migrator without a full installation. Simply clone the repository and run:
+
+```bash
+# Install the TUI dependency
+pip install py_cui
+
+# Run directly from the source directory
+cd migrator
+python3 migrator-tui.py
+```
+
+The TUI will automatically detect if Migrator is installed or not and run it accordingly.
+
 ### Command-Line Interface
 
 Once installed:
@@ -369,18 +396,6 @@ Migrator stores its data in `~/.local/share/migrator/`:
 - `migrator.log`: Log file
 
 Backups are stored in `~/migrator_backups/` by default, but this can be customized.
-
-## Installing TUI Dependencies
-
-To use the Terminal User Interface, you'll need additional dependencies:
-
-```bash
-# Install from requirements
-pip install py_cui
-
-# Or directly in your system (not recommended)
-sudo apt install python3-py-cui  # Debian/Ubuntu
-```
 
 ## License
 

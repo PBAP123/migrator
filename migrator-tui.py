@@ -730,7 +730,51 @@ Package Sources:
     def run_restore(self, backup_path):
         """Restore from backup"""
         self.root.stop_popup()
-        self.run_migrator_command(f"restore {backup_path}")
+        
+        # Show restore options popup
+        popup = self.root.create_popup('Restore Options', 6, 60)
+        text = popup.add_text_block('Options', 0, 0, row_span=3, column_span=1)
+        text.set_text("""
+Select restoration options:
+
+1 - Just restore state (no installation)
+2 - Full restore with packages and configs
+3 - Only install packages
+4 - Only restore configuration files
+""")
+        
+        # Button row
+        button_row = 3
+        
+        # Create buttons
+        state_btn = popup.add_button('State Only', button_row, 0)
+        full_btn = popup.add_button('Full Restore', button_row + 1, 0)
+        pkg_btn = popup.add_button('Packages Only', button_row, 0, column_span=1)
+        cfg_btn = popup.add_button('Configs Only', button_row + 1, 0, column_span=1)
+        
+        # Set handlers
+        state_btn.command = lambda: self._execute_restore(backup_path, False, False, False)
+        full_btn.command = lambda: self._execute_restore(backup_path, True, False, False)
+        pkg_btn.command = lambda: self._execute_restore(backup_path, False, True, False)
+        cfg_btn.command = lambda: self._execute_restore(backup_path, False, False, True)
+        
+        # Show popup
+        self.root.show_popup(popup)
+    
+    def _execute_restore(self, backup_path, execute=False, packages_only=False, configs_only=False):
+        """Execute restoration with specified options"""
+        self.root.stop_popup()
+        
+        # Build command
+        cmd = f"restore {backup_path}"
+        if execute:
+            cmd += " --execute"
+        if packages_only:
+            cmd += " --packages-only"
+        if configs_only:
+            cmd += " --configs-only"
+        
+        self.run_migrator_command(cmd)
     
     def install_migrator(self):
         """Install Migrator"""
