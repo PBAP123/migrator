@@ -25,6 +25,7 @@ import datetime
 import time
 from typing import List, Dict, Any, Optional, Set, Tuple
 import shutil
+import subprocess
 
 # Import package manager modules
 from package_managers.factory import PackageManagerFactory
@@ -205,17 +206,52 @@ class Migrator:
         backup_file = os.path.join(backup_dir, f"migrator_backup_{timestamp}.json")
         
         try:
+            # Write the state file
             with open(backup_file, 'w') as f:
                 json.dump(self.state, f, indent=2)
             
             logger.info(f"Backed up system state to {backup_file}")
+            
+            # Create a directory for config files
+            configs_dir = os.path.join(backup_dir, "config_files")
+            os.makedirs(configs_dir, exist_ok=True)
+            
+            # Copy all config files
+            config_count = 0
+            for config in self.state.get("config_files", []):
+                path = config["path"]
+                if os.path.exists(path) and os.access(path, os.R_OK):
+                    # Create relative path structure
+                    relative_path = path.lstrip("/")
+                    target_dir = os.path.join(configs_dir, os.path.dirname(relative_path))
+                    os.makedirs(target_dir, exist_ok=True)
+                    
+                    # Copy the file
+                    target_path = os.path.join(configs_dir, relative_path)
+                    try:
+                        shutil.copy2(path, target_path)
+                        config_count += 1
+                    except Exception as e:
+                        logger.error(f"Error copying config file {path}: {e}")
+            
+            logger.info(f"Backed up {config_count} configuration files to {configs_dir}")
+            
             return backup_file
         except IOError as e:
             logger.error(f"Error backing up system state: {e}")
             return ""
     
-    def restore_from_backup(self, backup_file: str) -> bool:
-        """Restore system state from a backup file"""
+    def restore_from_backup(self, backup_file: str, execute_plan: bool = False) -> bool:
+        """Restore system state from a backup file
+        
+        Args:
+            backup_file: Path to the backup file
+            execute_plan: Whether to automatically execute the installation plan
+                          and restore configuration files
+        
+        Returns:
+            Whether the operation was successful
+        """
         if not os.path.exists(backup_file):
             logger.error(f"Backup file doesn't exist: {backup_file}")
             return False
@@ -237,9 +273,156 @@ class Migrator:
             self._save_state()
             
             logger.info(f"Restored system state from {backup_file}")
+            
+            # Execute installation plan if requested
+            if execute_plan:
+                logger.info("Executing installation plan...")
+                self.execute_installation_plan(backup_file)
+                
+                logger.info("Restoring configuration files...")
+                self.execute_config_restoration(backup_file)
+            
             return True
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Error restoring from backup: {e}")
+            return False
+    
+    def execute_installation_plan(self, backup_file: str) -> bool:
+        """Execute the installation plan to install packages from a backup
+        
+        Args:
+            backup_file: Path to the backup file
+        
+        Returns:
+            Whether the operation was successful
+        """
+        if not os.path.exists(backup_file):
+            logger.error(f"Backup file doesn't exist: {backup_file}")
+            return False
+        
+        try:
+            # Generate the installation plan
+            plan = self.generate_installation_plan(backup_file)
+            
+            if not plan["installation_commands"]:
+                logger.warning("No packages to install from backup")
+                return True
+            
+            # Execute each installation command
+            for cmd in plan["installation_commands"]:
+                logger.info(f"Executing: {cmd}")
+                try:
+                    result = subprocess.run(
+                        cmd, 
+                        shell=True, 
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True
+                    )
+                    logger.info(f"Command completed successfully: {cmd}")
+                    logger.debug(f"Output: {result.stdout}")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Command failed: {cmd}")
+                    logger.error(f"Error: {e.stderr}")
+                    # Continue with other commands even if one fails
+            
+            logger.info(f"Executed {len(plan['installation_commands'])} installation commands")
+            
+            # Report on unavailable packages
+            if plan["unavailable"]:
+                logger.warning(f"{len(plan['unavailable'])} packages could not be installed:")
+                for pkg in plan["unavailable"]:
+                    logger.warning(f"  - {pkg['name']} (source: {pkg['source']})")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error executing installation plan: {e}")
+            return False
+    
+    def execute_config_restoration(self, backup_file: str) -> bool:
+        """Restore configuration files from a backup
+        
+        Args:
+            backup_file: Path to the backup file
+        
+        Returns:
+            Whether the operation was successful
+        """
+        if not os.path.exists(backup_file):
+            logger.error(f"Backup file doesn't exist: {backup_file}")
+            return False
+        
+        try:
+            with open(backup_file, 'r') as f:
+                backup_state = json.load(f)
+            
+            # Get backup directory
+            backup_dir = os.path.dirname(os.path.abspath(backup_file))
+            configs_dir = os.path.join(backup_dir, "config_files")
+            
+            # Check if config directory exists
+            if not os.path.exists(configs_dir):
+                # Create directory structure for config files
+                os.makedirs(configs_dir, exist_ok=True)
+                
+                # Export the config files from the backup
+                for config in backup_state.get("config_files", []):
+                    path = config["path"]
+                    relative_path = path.lstrip("/")
+                    if os.path.exists(path):
+                        target_dir = os.path.join(configs_dir, os.path.dirname(relative_path))
+                        os.makedirs(target_dir, exist_ok=True)
+                        target_path = os.path.join(configs_dir, relative_path)
+                        try:
+                            shutil.copy2(path, target_path)
+                            logger.info(f"Exported config file: {path} -> {target_path}")
+                        except Exception as e:
+                            logger.error(f"Failed to export config file {path}: {e}")
+            
+            # Generate restoration plan
+            plan = self.generate_config_restoration_plan(backup_file)
+            
+            # Track results
+            success_count = 0
+            failed_count = 0
+            
+            # Restore each file
+            for config in plan["restorable"]:
+                path = config["path"]
+                relative_path = path.lstrip("/")
+                source_path = os.path.join(configs_dir, relative_path)
+                
+                # Create target directory if needed
+                target_dir = os.path.dirname(path)
+                os.makedirs(target_dir, exist_ok=True)
+                
+                try:
+                    # Check if we have the config file in our backup
+                    if os.path.exists(source_path):
+                        # Copy the file to its original location
+                        shutil.copy2(source_path, path)
+                        logger.info(f"Restored config file: {source_path} -> {path}")
+                        success_count += 1
+                    else:
+                        logger.warning(f"Config file not available in backup: {path}")
+                        failed_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to restore config file {path}: {e}")
+                    failed_count += 1
+            
+            # Report problematic configs
+            if plan["problematic"]:
+                logger.warning(f"{len(plan['problematic'])} config files have conflicts:")
+                for config in plan["problematic"]:
+                    logger.warning(f"  - {config['path']} (status: {config.get('status', 'unknown')})")
+            
+            # Log summary
+            logger.info(f"Config restoration summary: {success_count} restored, {failed_count} failed, {len(plan['problematic'])} conflicts")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error executing config restoration: {e}")
             return False
     
     def compare_with_backup(self, backup_file: str) -> Tuple[List[Dict], List[Dict], List[Dict], List[Dict]]:
@@ -467,7 +650,7 @@ class Migrator:
             
             # Find saved config
             saved_config = next((cfg for cfg in self.state.get("config_files", []) 
-                                 if cfg["path"] == config_dict["path"]), None)
+                                if cfg["path"] == config_dict["path"]), None)
             
             if saved_config and saved_config["checksum"] != config_dict["checksum"]:
                 config_dict["status"] = "changed"

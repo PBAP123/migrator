@@ -42,6 +42,8 @@ def setup_argparse() -> argparse.ArgumentParser:
               migrator scan --include-desktop  # Include desktop environment configs
               migrator backup ~/backups   # Backup system state to directory
               migrator restore backup.json # Restore from backup
+              migrator restore backup.json --execute  # Restore and install packages/configs
+              migrator restore backup.json --packages-only  # Only install packages
               migrator compare backup.json # Compare current system with backup
               migrator plan backup.json   # Generate installation plan from backup
               migrator install-service    # Install as a systemd service
@@ -72,6 +74,12 @@ def setup_argparse() -> argparse.ArgumentParser:
     # Restore command
     restore_parser = subparsers.add_parser('restore', help='Restore system state from backup')
     restore_parser.add_argument('backup_file', help='Backup file to restore from')
+    restore_parser.add_argument('--execute', '-e', action='store_true', 
+                             help='Automatically install packages and restore config files')
+    restore_parser.add_argument('--packages-only', action='store_true',
+                             help='Only install packages, skip config files')
+    restore_parser.add_argument('--configs-only', action='store_true',
+                             help='Only restore config files, skip packages')
     
     # Compare command
     compare_parser = subparsers.add_parser('compare', help='Compare current system with backup')
@@ -178,14 +186,28 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     """Handle restore command"""
     print(f"Restoring system state from {args.backup_file}...")
     
-    success = app.restore_from_backup(args.backup_file)
+    # Default behavior: just restore the state without execution
+    execute_plan = args.execute if hasattr(args, 'execute') else False
     
-    if success:
-        print("System state restored successfully.")
-        return 0
-    else:
+    success = app.restore_from_backup(args.backup_file, execute_plan=execute_plan)
+    
+    if not success:
         print("Failed to restore system state.")
         return 1
+    
+    print("System state restored successfully.")
+    
+    # If not doing automatic execution but one of the specific flags is set
+    if not execute_plan:
+        if hasattr(args, 'packages_only') and args.packages_only:
+            print("Installing packages from backup...")
+            app.execute_installation_plan(args.backup_file)
+        
+        if hasattr(args, 'configs_only') and args.configs_only:
+            print("Restoring configuration files from backup...")
+            app.execute_config_restoration(args.backup_file)
+    
+    return 0
 
 def handle_compare(app: Migrator, args: argparse.Namespace) -> int:
     """Handle compare command"""

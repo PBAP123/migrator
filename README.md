@@ -225,6 +225,15 @@ migrator backup ~/backups
 # Restore the system state from a backup file
 migrator restore ~/backups/migrator_backup_20230101_120000.json
 
+# Restore and automatically install all packages and configuration files
+migrator restore ~/backups/migrator_backup_20230101_120000.json --execute
+
+# Only install packages from backup, skip config files
+migrator restore ~/backups/migrator_backup_20230101_120000.json --packages-only
+
+# Only restore configuration files, skip package installation
+migrator restore ~/backups/migrator_backup_20230101_120000.json --configs-only
+
 # Compare the current system with a backup
 migrator compare ~/backups/migrator_backup_20230101_120000.json
 
