@@ -1,4 +1,4 @@
-# Linux Packages
+# Migrator
 
 A system migration utility for Linux that tracks installed packages and configuration files, making it easy to migrate to a new system.
 
@@ -15,20 +15,31 @@ A system migration utility for Linux that tracks installed packages and configur
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
 
+## Requirements
+
+- **Python**: Version 3.6 or higher
+- **Linux OS**: Any distribution with standard package managers
+- **Dependencies**: 
+  - `distro` Python package (v1.5.0 or higher)
+  - Access to package manager executables for detection (apt, snap, flatpak, etc.)
+
 ## Installation
 
 ### From Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/n3o/linuxpackages.git
-cd linuxpackages
+git clone https://github.com/n3o/migrator.git
+cd migrator
+
+# Make sure you have Python 3.6+ installed
+python3 --version
 
 # Install dependencies
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 
 # Install the package
-pip install -e .
+pip3 install -e .
 ```
 
 ## Usage
@@ -37,50 +48,50 @@ pip install -e .
 
 ```bash
 # Scan the system and update the system state
-linuxpackages scan
+migrator scan
 
 # Backup the current system state to a directory
-linuxpackages backup ~/backups
+migrator backup ~/backups
 
 # Restore the system state from a backup file
-linuxpackages restore ~/backups/linuxpackages_backup_20230101_120000.json
+migrator restore ~/backups/migrator_backup_20230101_120000.json
 
 # Compare the current system with a backup
-linuxpackages compare ~/backups/linuxpackages_backup_20230101_120000.json
+migrator compare ~/backups/migrator_backup_20230101_120000.json
 
 # Generate an installation plan from a backup
-linuxpackages plan ~/backups/linuxpackages_backup_20230101_120000.json
+migrator plan ~/backups/migrator_backup_20230101_120000.json
 
 # Check for changes since the last scan
-linuxpackages check
+migrator check
 
 # Run as a service to check for changes periodically
-linuxpackages service
+migrator service
 ```
 
 ### As a Service
 
-You can set up Linux Packages to run as a service to periodically check for changes:
+You can set up Migrator to run as a service to periodically check for changes:
 
 ```bash
 # Run the service with a custom interval (in seconds)
-linuxpackages service --interval 3600  # Check every hour
+migrator service --interval 3600  # Check every hour
 ```
 
 For a more permanent solution, create a systemd service or cronjob:
 
 #### Using systemd
 
-Create a file at `/etc/systemd/system/linuxpackages.service`:
+Create a file at `/etc/systemd/system/migrator.service`:
 
 ```ini
 [Unit]
-Description=Linux Packages Migration Utility
+Description=Migrator System Migration Utility
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/linuxpackages service
+ExecStart=/usr/local/bin/migrator service
 Restart=on-failure
 User=your_username
 
@@ -91,8 +102,8 @@ WantedBy=multi-user.target
 Enable and start the service:
 
 ```bash
-sudo systemctl enable linuxpackages.service
-sudo systemctl start linuxpackages.service
+sudo systemctl enable migrator.service
+sudo systemctl start migrator.service
 ```
 
 #### Using cron
@@ -104,15 +115,15 @@ Set up a daily cron job:
 crontab -e
 
 # Add the following line to run every day at 3 AM
-0 3 * * * /usr/local/bin/linuxpackages check
+0 3 * * * /usr/local/bin/migrator check
 ```
 
 ## Data Storage
 
-Linux Packages stores its data in `~/.local/share/linuxpackages/`:
+Migrator stores its data in `~/.local/share/migrator/`:
 
 - `system_state.json`: The current system state
-- `linuxpackages.log`: Log file
+- `migrator.log`: Log file
 
 ## License
 

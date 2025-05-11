@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Command-line interface for Linux Packages utility
+Command-line interface for Migrator utility
 """
 
 import os
@@ -13,22 +13,22 @@ import textwrap
 from datetime import datetime
 from typing import List, Dict, Any
 
-from main import LinuxPackages
+from main import Migrator
 
 logger = logging.getLogger(__name__)
 
 def setup_argparse() -> argparse.ArgumentParser:
     """Set up command-line argument parser"""
     parser = argparse.ArgumentParser(
-        description="Linux Packages - A system migration utility",
+        description="Migrator - A system migration utility",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             Examples:
-              linuxpackages scan               # Scan and update system state
-              linuxpackages backup ~/backups   # Backup system state to directory
-              linuxpackages restore backup.json # Restore from backup
-              linuxpackages compare backup.json # Compare current system with backup
-              linuxpackages plan backup.json   # Generate installation plan from backup
+              migrator scan               # Scan and update system state
+              migrator backup ~/backups   # Backup system state to directory
+              migrator restore backup.json # Restore from backup
+              migrator compare backup.json # Compare current system with backup
+              migrator plan backup.json   # Generate installation plan from backup
         """)
     )
     
@@ -65,14 +65,14 @@ def setup_argparse() -> argparse.ArgumentParser:
     
     return parser
 
-def handle_scan(app: LinuxPackages, args: argparse.Namespace) -> int:
+def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
     """Handle scan command"""
     print("Scanning system for packages and configuration files...")
     app.update_system_state()
     print("System state updated successfully.")
     return 0
 
-def handle_backup(app: LinuxPackages, args: argparse.Namespace) -> int:
+def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     """Handle backup command"""
     print(f"Backing up system state to {args.backup_dir}...")
     
@@ -89,7 +89,7 @@ def handle_backup(app: LinuxPackages, args: argparse.Namespace) -> int:
         print("Failed to create backup.")
         return 1
 
-def handle_restore(app: LinuxPackages, args: argparse.Namespace) -> int:
+def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     """Handle restore command"""
     print(f"Restoring system state from {args.backup_file}...")
     
@@ -102,7 +102,7 @@ def handle_restore(app: LinuxPackages, args: argparse.Namespace) -> int:
         print("Failed to restore system state.")
         return 1
 
-def handle_compare(app: LinuxPackages, args: argparse.Namespace) -> int:
+def handle_compare(app: Migrator, args: argparse.Namespace) -> int:
     """Handle compare command"""
     print(f"Comparing current system with backup {args.backup_file}...")
     
@@ -134,7 +134,7 @@ def handle_compare(app: LinuxPackages, args: argparse.Namespace) -> int:
     
     return 0
 
-def handle_plan(app: LinuxPackages, args: argparse.Namespace) -> int:
+def handle_plan(app: Migrator, args: argparse.Namespace) -> int:
     """Handle plan command"""
     print(f"Generating installation plan from backup {args.backup_file}...")
     
@@ -174,7 +174,7 @@ def handle_plan(app: LinuxPackages, args: argparse.Namespace) -> int:
     
     return 0
 
-def handle_check(app: LinuxPackages, args: argparse.Namespace) -> int:
+def handle_check(app: Migrator, args: argparse.Namespace) -> int:
     """Handle check command"""
     print("Checking for system changes since last scan...")
     
@@ -201,7 +201,7 @@ def handle_check(app: LinuxPackages, args: argparse.Namespace) -> int:
     
     return 0
 
-def handle_service(app: LinuxPackages, args: argparse.Namespace) -> int:
+def handle_service(app: Migrator, args: argparse.Namespace) -> int:
     """Handle service command (periodic checking)"""
     interval = args.interval
     print(f"Running as a service, checking every {interval} seconds...")
@@ -236,7 +236,7 @@ def main() -> int:
         return 1
     
     # Initialize application
-    app = LinuxPackages()
+    app = Migrator()
     
     # Handle commands
     command_handlers = {

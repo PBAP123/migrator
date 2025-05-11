@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main application module for Linux Packages - a system migration utility
+Main application module for Migrator - a system migration utility
 """
 
 import os
@@ -31,19 +31,19 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.expanduser("~/.local/share/linuxpackages/linuxpackages.log"))
+        logging.FileHandler(os.path.expanduser("~/.local/share/migrator/migrator.log"))
     ]
 )
 
 logger = logging.getLogger(__name__)
 
-class LinuxPackages:
-    """Main application class for Linux Packages"""
+class Migrator:
+    """Main application class for Migrator"""
     
     def __init__(self):
         """Initialize the application"""
         # Create data directory if it doesn't exist
-        self.data_dir = os.path.expanduser("~/.local/share/linuxpackages")
+        self.data_dir = os.path.expanduser("~/.local/share/migrator")
         os.makedirs(self.data_dir, exist_ok=True)
         
         # Initialize system information
@@ -159,7 +159,7 @@ class LinuxPackages:
         
         # Create a timestamped backup file
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = os.path.join(backup_dir, f"linuxpackages_backup_{timestamp}.json")
+        backup_file = os.path.join(backup_dir, f"migrator_backup_{timestamp}.json")
         
         try:
             with open(backup_file, 'w') as f:

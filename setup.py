@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Setup script for Linux Packages utility
+Setup script for Migrator utility
 """
 
 from setuptools import setup, find_packages
 
 setup(
-    name="linuxpackages",
+    name="migrator",
     version="0.1.0",
     description="A system migration utility for Linux",
-    author="n3o",
-    author_email="n3o@example.com",
-    url="https://github.com/n3o/linuxpackages",
+    author="Ali Price",
+    author_email="ali.price@pantheritservices.co.uk",
+    url="https://github.com/PBAP123/migrator",
     packages=find_packages(),
     package_dir={"": "src"},
     entry_points={
         "console_scripts": [
-            "linuxpackages=__main__:main",
+            "migrator=__main__:main",
         ],
     },
     install_requires=[
-        "distro",  # For better distribution detection
+        "distro>=1.5.0",  # For better distribution detection
     ],
     python_requires=">=3.6",
     classifiers=[
