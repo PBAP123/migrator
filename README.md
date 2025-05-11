@@ -53,6 +53,13 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Analyzes /etc/fstab during backup and identifies portable entries
   - Only backs up entries for network shares, special filesystems and non-hardware-specific mounts
   - Ensures hardware-dependent entries aren't transferred between systems
+- **Dry Run Mode**: Preview all changes before execution:
+  - See exactly what packages will be installed
+  - Review configuration files that will be modified
+  - Identify path transformations that will be applied
+  - Examine fstab entries that will be added
+  - Discover potential conflicts before they occur
+  - Get confirmation before proceeding with actual changes
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
 - **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
@@ -277,6 +284,9 @@ migrator config set-backup-dir /path/to/backup  # Set a new default backup locat
 # Create a backup using the default location (no path needed)
 migrator backup
 
+# Preview all changes a restore would make without applying them (dry run mode)
+migrator restore ~/backups/migrator_backup_20230101_120000.json --dry-run
+
 # Restore with automatic path transformation (enabled by default)
 migrator restore ~/backups/migrator_backup_20230101_120000.json --execute
 
@@ -322,6 +332,24 @@ migrator check
 # Run as a service to check for changes periodically
 migrator service
 ```
+
+### Dry Run Restore Mode
+
+The `--dry-run` option for the restore command provides a comprehensive preview of all changes that would be made to your system without actually applying them:
+
+```bash
+migrator restore ~/backups/migrator_backup_20230101_120000.json --dry-run
+```
+
+This generates a detailed report showing:
+
+1. **Packages**: Lists packages that would be installed and any that are unavailable
+2. **Configuration Files**: Shows which config files would be restored and any potential conflicts
+3. **Path Transformations**: Previews how system-specific paths would be adapted
+4. **Fstab Entries**: Displays portable fstab entries that would be appended
+5. **Conflicts and Issues**: Highlights potential problems before they occur
+
+After reviewing the report, you'll be prompted to confirm if you want to proceed with the actual restore operation. This gives you a clear understanding of the impact before committing to any changes.
 
 ### Desktop Environment Configuration Backup
 

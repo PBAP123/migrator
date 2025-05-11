@@ -86,6 +86,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Only install packages, skip config files')
     restore_parser.add_argument('--configs-only', action='store_true',
                              help='Only restore config files, skip packages')
+    restore_parser.add_argument('--dry-run', action='store_true',
+                              help='Perform a dry run showing all changes that would be made without actually applying them')
     # Version handling options
     version_group = restore_parser.add_argument_group('version handling')
     version_group.add_argument('--version-policy', type=str, default='prefer-newer',
@@ -241,6 +243,92 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
 def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     """Handle restore command"""
     print(f"Restoring system state from {args.backup_file}...")
+    
+    # Check for dry run mode
+    dry_run = args.dry_run if hasattr(args, 'dry_run') else False
+    
+    if dry_run:
+        print("DRY RUN MODE - No changes will be made to your system")
+        print("Generating comprehensive restore preview...")
+        
+        # Get options from arguments
+        version_policy = args.version_policy if hasattr(args, 'version_policy') else 'prefer-newer'
+        allow_downgrade = args.allow_downgrade if hasattr(args, 'allow_downgrade') else False
+        transform_paths = not args.no_path_transform if hasattr(args, 'no_path_transform') else True
+        
+        # Generate dry run report
+        report = app.generate_dry_run_report(
+            args.backup_file,
+            version_policy=version_policy,
+            allow_downgrade=allow_downgrade,
+            transform_paths=transform_paths
+        )
+        
+        # Display the report
+        print("\n=== DRY RUN RESTORE REPORT ===\n")
+        
+        # Package section
+        print("PACKAGES:")
+        print(f"  • {report['packages']['to_install']} packages will be installed")
+        print(f"  • {report['packages']['unavailable']} packages are unavailable")
+        
+        if report['packages']['installation_commands']:
+            print("\nInstallation commands that would be executed:")
+            for i, cmd in enumerate(report['packages']['installation_commands'][:5], 1):
+                print(f"  {i}. {cmd}")
+            if len(report['packages']['installation_commands']) > 5:
+                print(f"  ... and {len(report['packages']['installation_commands']) - 5} more commands")
+        
+        # Config files section
+        print("\nCONFIGURATION FILES:")
+        print(f"  • {report['config_files']['to_restore']} configuration files will be restored")
+        print(f"  • {report['config_files']['conflicts']} configuration files have conflicts")
+        
+        if report['config_files']['paths']:
+            print("\nSample of configuration files to be restored:")
+            for path in report['config_files']['paths'][:5]:
+                print(f"  • {path}")
+            if len(report['config_files']['paths']) > 5:
+                print(f"  ... and {len(report['config_files']['paths']) - 5} more files")
+        
+        # Path transformations section
+        if report['path_transformations']:
+            print("\nPATH TRANSFORMATIONS:")
+            print("The following path transformations would be applied:")
+            for i, (src_path, tgt_path) in enumerate(list(report['path_transformations'].items())[:5], 1):
+                print(f"  {i}. {src_path} -> {tgt_path}")
+            if len(report['path_transformations']) > 5:
+                print(f"  ... and {len(report['path_transformations']) - 5} more transformations")
+        
+        # Fstab entries section
+        if report['fstab_entries']:
+            print("\nFSTAB ENTRIES:")
+            print("The following portable fstab entries would be appended:")
+            for i, entry in enumerate(report['fstab_entries'][:5], 1):
+                print(f"  {i}. {entry}")
+            if len(report['fstab_entries']) > 5:
+                print(f"  ... and {len(report['fstab_entries']) - 5} more entries")
+        
+        # Conflicts section
+        if report['conflicts']:
+            print("\nPOTENTIAL ISSUES AND CONFLICTS:")
+            for i, conflict in enumerate(report['conflicts'], 1):
+                if conflict['type'] == 'package_unavailable':
+                    print(f"  {i}. Package '{conflict['name']}' ({conflict['source']}) is unavailable: {conflict['reason']}")
+                elif conflict['type'] == 'version_downgrade_required':
+                    print(f"  {i}. Package '{conflict['name']}' would require downgrade from {conflict['available_version']} to {conflict['backup_version']}")
+                elif conflict['type'] == 'config_conflict':
+                    print(f"  {i}. Config file '{conflict['path']}' has conflict: {conflict['status']}")
+        
+        # Ask for confirmation to proceed with actual restore
+        print("\n===================================\n")
+        proceed = input("Do you want to proceed with the actual restore? (yes/no): ").lower().strip()
+        if proceed != 'yes':
+            print("Restore operation cancelled.")
+            return 0
+        else:
+            print("Proceeding with actual restore...")
+            # Continue with the regular restore process...
     
     # Default behavior: just restore the state without execution
     execute_plan = args.execute if hasattr(args, 'execute') else False
