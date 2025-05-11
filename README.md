@@ -14,6 +14,8 @@ A system migration utility for Linux that tracks installed packages and configur
 - **Incremental Backup**: Monitors changes to packages and configurations over time.
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
+- **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
+- **Service Management**: Run as a background service with automatic checks.
 
 ## Requirements
 
@@ -162,6 +164,24 @@ If you encounter issues:
 
 ## Usage
 
+### Terminal User Interface (TUI)
+
+Migrator now includes a comprehensive TUI for easier management:
+
+```bash
+# Launch the TUI
+python3 migrator-tui.py
+```
+
+The TUI provides access to all Migrator functionality through an intuitive interface:
+
+- **Dashboard**: View system status and quick actions
+- **Install/Setup**: Interactive setup wizard with distribution detection
+- **Scan System**: Scan for packages and configuration files
+- **Backups**: Create and manage backups
+- **Compare/Restore**: Compare changes and restore from backups
+- **Service Management**: Install and manage Migrator as a service
+
 ### Command-Line Interface
 
 Once installed:
@@ -213,16 +233,22 @@ The installer will:
 
 Once installed as a service, Migrator will run completely automatically in the background with no need for manual intervention.
 
-#### Manual Removal
+#### Managing the Service
 
-To remove the service:
+The TUI provides a service management interface, or you can use these commands:
 
 ```bash
-# Remove a system-wide service
-migrator remove-service
+# Check service status
+systemctl status migrator  # system service
+systemctl --user status migrator  # user service
 
-# Remove a user service
-migrator remove-service --user
+# Start the service
+systemctl start migrator  # system service
+systemctl --user start migrator  # user service
+
+# Remove the service
+migrator remove-service  # system service
+migrator remove-service --user  # user service
 ```
 
 #### Legacy: Manual Service Setup
@@ -275,6 +301,20 @@ Migrator stores its data in `~/.local/share/migrator/`:
 - `system_state.json`: The current system state
 - `migrator.log`: Log file
 
+Backups are stored in `~/migrator_backups/` by default, but this can be customized.
+
+## Installing TUI Dependencies
+
+To use the Terminal User Interface, you'll need additional dependencies:
+
+```bash
+# Install from requirements
+pip install py_cui
+
+# Or directly in your system (not recommended)
+sudo apt install python3-py-cui  # Debian/Ubuntu
+```
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
@@ -282,3 +322,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Author
+
+Developed by Ali Price (ali.price@pantheritservices.co.uk).
+GitHub: https://github.com/PBAP123/migrator
