@@ -375,7 +375,7 @@ sudo apt install python3-py-cui  # Debian/Ubuntu
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) - see the LICENSE file for details. This license requires that modified versions of this software also be made available under the AGPL-3.0 license, and that you provide access to the source code when you serve users over a network.
 
 ## Contributing
 
