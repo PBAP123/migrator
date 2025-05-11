@@ -64,7 +64,7 @@ setup(
     author="Ali Price",
     author_email="ali.price@pantheritservices.co.uk",
     url="https://github.com/PBAP123/migrator",
-    packages=find_packages(),
+    packages=find_packages(where="src"),
     package_dir={"": "src"},
     entry_points={
         "console_scripts": [
