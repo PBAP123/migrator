@@ -25,7 +25,9 @@ A system migration utility for Linux that tracks installed packages and configur
 
 ## Installation
 
-### From Source
+### Recommended: Using a Virtual Environment
+
+Modern Linux distributions (especially Debian/Ubuntu-based ones) enforce PEP 668, which prevents direct pip installations outside of virtual environments. Using a virtual environment is the recommended approach:
 
 ```bash
 # Clone the repository
@@ -35,16 +37,44 @@ cd migrator
 # Make sure you have Python 3.6+ installed
 python3 --version
 
-# Install dependencies
-pip3 install -r requirements.txt
+# Install virtualenv if you don't have it
+# For Debian/Ubuntu:
+sudo apt install python3-venv
 
-# Install the package
-pip3 install -e .
+# Create a virtual environment
+python3 -m venv ~/.venvs/migrator
+
+# Activate the virtual environment
+source ~/.venvs/migrator/bin/activate
+
+# Install dependencies and the package
+pip install -r requirements.txt
+pip install -e .
+
+# Now you can run migrator commands
+migrator scan
+```
+
+Remember to activate the virtual environment whenever you want to use Migrator:
+
+```bash
+source ~/.venvs/migrator/bin/activate
+```
+
+### Alternative: Run Without Installing
+
+If you prefer not to install, you can run Migrator directly:
+
+```bash
+cd migrator
+python3 -m src.__main__ scan
 ```
 
 ## Usage
 
 ### Command-Line Interface
+
+Once installed and your virtual environment is activated:
 
 ```bash
 # Scan the system and update the system state
@@ -71,16 +101,9 @@ migrator service
 
 ### As a Service
 
-You can set up Migrator to run as a service to periodically check for changes:
+You can set up Migrator to run as a service to periodically check for changes.
 
-```bash
-# Run the service with a custom interval (in seconds)
-migrator service --interval 3600  # Check every hour
-```
-
-For a more permanent solution, create a systemd service or cronjob:
-
-#### Using systemd
+#### Using systemd with Virtual Environment
 
 Create a file at `/etc/systemd/system/migrator.service`:
 
@@ -91,9 +114,10 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/migrator service
+Environment="PATH=/home/yourusername/.venvs/migrator/bin:$PATH"
+ExecStart=/home/yourusername/.venvs/migrator/bin/migrator service
 Restart=on-failure
-User=your_username
+User=yourusername
 
 [Install]
 WantedBy=multi-user.target
@@ -106,7 +130,7 @@ sudo systemctl enable migrator.service
 sudo systemctl start migrator.service
 ```
 
-#### Using cron
+#### Using cron with Virtual Environment
 
 Set up a daily cron job:
 
@@ -115,7 +139,7 @@ Set up a daily cron job:
 crontab -e
 
 # Add the following line to run every day at 3 AM
-0 3 * * * /usr/local/bin/migrator check
+0 3 * * * source /home/yourusername/.venvs/migrator/bin/activate && migrator check
 ```
 
 ## Data Storage
