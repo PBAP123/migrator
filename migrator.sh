@@ -1,0 +1,61 @@
+#!/bin/bash
+# migrator.sh - Wrapper script for Migrator that handles virtual environment activation
+
+# Default location for the virtual environment
+DEFAULT_VENV_PATH="$HOME/.venvs/migrator"
+
+# Function to find the migrator virtual environment
+find_venv() {
+    # First check if MIGRATOR_VENV environment variable is set
+    if [ -n "$MIGRATOR_VENV" ] && [ -d "$MIGRATOR_VENV" ]; then
+        echo "$MIGRATOR_VENV"
+        return 0
+    fi
+    
+    # Check default location
+    if [ -d "$DEFAULT_VENV_PATH" ]; then
+        echo "$DEFAULT_VENV_PATH"
+        return 0
+    fi
+    
+    # Check common alternative locations
+    for path in "$HOME/.virtualenvs/migrator" "$HOME/venvs/migrator" "$HOME/.local/share/virtualenvs/migrator"; do
+        if [ -d "$path" ]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    
+    # No virtual environment found
+    return 1
+}
+
+# Check if already in a virtual environment
+if [ -z "$VIRTUAL_ENV" ]; then
+    # Find and activate the migrator virtual environment
+    VENV_PATH=$(find_venv)
+    if [ $? -eq 0 ]; then
+        # Activate the virtual environment without modifying the current shell
+        if [ -f "$VENV_PATH/bin/activate" ]; then
+            # Run the command with the activated environment
+            source "$VENV_PATH/bin/activate"
+            migrator "$@"
+            exit $?
+        fi
+    fi
+    
+    # If no virtual environment found or activation failed, try running directly
+    if command -v python3 > /dev/null; then
+        SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+        echo "No migrator virtual environment found, running directly..."
+        python3 -m src.__main__ "$@"
+        exit $?
+    else
+        echo "Error: Python3 not found. Please install Python 3.6+ to use Migrator."
+        exit 1
+    fi
+else
+    # Already in a virtual environment, run migrator directly
+    migrator "$@"
+    exit $?
+fi 

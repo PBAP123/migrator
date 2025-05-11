@@ -50,16 +50,33 @@ source ~/.venvs/migrator/bin/activate
 # Install dependencies and the package
 pip install -r requirements.txt
 pip install -e .
-
-# Now you can run migrator commands
-migrator scan
 ```
 
-Remember to activate the virtual environment whenever you want to use Migrator:
+### Running Migrator Commands
 
-```bash
-source ~/.venvs/migrator/bin/activate
-```
+After installation, there are two ways to run Migrator:
+
+1. **Using the wrapper script (Recommended)**: 
+   
+   The installation process automatically creates a wrapper script at `~/.local/bin/migrator`. This script automatically handles virtual environment activation, so you can simply run:
+
+   ```bash
+   migrator scan
+   ```
+
+   Without having to manually activate the virtual environment. The wrapper automatically:
+   - Detects and activates the Migrator virtual environment
+   - Falls back to direct execution if no virtual environment is found
+   - Works whether you're already in a virtual environment or not
+
+   > **Note**: Make sure `~/.local/bin` is in your PATH. If you see a message about this during installation, follow the provided instructions.
+
+2. **Manual virtual environment activation**:
+
+   ```bash
+   source ~/.venvs/migrator/bin/activate
+   migrator scan
+   ```
 
 ### Alternative: Run Without Installing
 
@@ -74,7 +91,7 @@ python3 -m src.__main__ scan
 
 ### Command-Line Interface
 
-Once installed and your virtual environment is activated:
+Once installed:
 
 ```bash
 # Scan the system and update the system state
@@ -120,6 +137,8 @@ The installer will:
 1. Automatically detect your username and virtual environment
 2. Create the appropriate systemd service file
 3. Enable and start the service (with your permission)
+
+Once installed as a service, Migrator will run completely automatically in the background with no need for manual intervention.
 
 #### Manual Removal
 

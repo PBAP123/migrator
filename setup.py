@@ -4,6 +4,45 @@ Setup script for Migrator utility
 """
 
 from setuptools import setup, find_packages
+import os
+import shutil
+from pathlib import Path
+
+# Copy wrapper script to a bin directory
+def install_wrapper_script():
+    """Install the wrapper script to a location in PATH"""
+    # Get the current directory
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    wrapper_script = os.path.join(current_dir, 'migrator.sh')
+    
+    # Default target locations
+    user_bin_dir = os.path.expanduser('~/.local/bin')
+    
+    # Ensure target directory exists
+    os.makedirs(user_bin_dir, exist_ok=True)
+    
+    # Copy the script
+    target_path = os.path.join(user_bin_dir, 'migrator')
+    shutil.copy2(wrapper_script, target_path)
+    os.chmod(target_path, 0o755)  # Make executable
+    
+    print(f"Wrapper script installed to {target_path}")
+    
+    # Check if the directory is in PATH
+    if user_bin_dir not in os.environ.get('PATH', '').split(os.pathsep):
+        shell_profile = os.path.expanduser('~/.bashrc')
+        print(f"\nNOTE: {user_bin_dir} is not in your PATH.")
+        print(f"You may need to add this line to your {shell_profile}:")
+        print(f"    export PATH=\"{user_bin_dir}:$PATH\"")
+        print("Then restart your terminal or run:")
+        print(f"    source {shell_profile}")
+
+# Run the installation if this is being installed (not just built)
+if not os.environ.get('READTHEDOCS') and any(arg.startswith('install') for arg in os.sys.argv[1:]):
+    try:
+        install_wrapper_script()
+    except Exception as e:
+        print(f"Warning: Failed to install wrapper script: {e}")
 
 setup(
     name="migrator",
@@ -36,4 +75,5 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Topic :: System :: Systems Administration",
     ],
+    scripts=['migrator.sh'],
 ) 
