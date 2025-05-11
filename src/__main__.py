@@ -26,6 +26,7 @@ def setup_argparse() -> argparse.ArgumentParser:
         epilog=textwrap.dedent("""\
             Examples:
               migrator scan               # Scan and update system state
+              migrator scan --include-desktop  # Include desktop environment configs
               migrator backup ~/backups   # Backup system state to directory
               migrator restore backup.json # Restore from backup
               migrator compare backup.json # Compare current system with backup
@@ -38,10 +39,22 @@ def setup_argparse() -> argparse.ArgumentParser:
     
     # Scan command
     scan_parser = subparsers.add_parser('scan', help='Scan system and update state')
+    scan_parser.add_argument('--include-desktop', action='store_true', 
+                           help='Include desktop environment configs')
+    scan_parser.add_argument('--desktop-environments', 
+                           help='Comma-separated list of desktop environments to include (e.g., gnome,kde,i3)')
+    scan_parser.add_argument('--exclude-desktop', 
+                           help='Comma-separated list of desktop environments to exclude')
     
     # Backup command
     backup_parser = subparsers.add_parser('backup', help='Backup system state')
     backup_parser.add_argument('backup_dir', help='Directory to store backup')
+    backup_parser.add_argument('--include-desktop', action='store_true', 
+                             help='Include desktop environment configs')
+    backup_parser.add_argument('--desktop-environments', 
+                             help='Comma-separated list of desktop environments to include (e.g., gnome,kde,i3)')
+    backup_parser.add_argument('--exclude-desktop', 
+                             help='Comma-separated list of desktop environments to exclude')
     
     # Restore command
     restore_parser = subparsers.add_parser('restore', help='Restore system state from backup')
@@ -59,11 +72,15 @@ def setup_argparse() -> argparse.ArgumentParser:
     
     # Check command
     check_parser = subparsers.add_parser('check', help='Check for system changes since last scan')
+    check_parser.add_argument('--include-desktop', action='store_true', 
+                            help='Include desktop environment configs in check')
     
     # Service command (for background scanning)
     service_parser = subparsers.add_parser('service', help='Run as a service for periodic checking')
     service_parser.add_argument('--interval', '-i', type=int, default=86400,
                                 help='Interval between checks in seconds (default: 86400 - once per day)')
+    service_parser.add_argument('--include-desktop', action='store_true', 
+                              help='Include desktop environment configs in service checks')
     
     # Install service command
     install_service_parser = subparsers.add_parser('install-service', 
@@ -83,8 +100,32 @@ def setup_argparse() -> argparse.ArgumentParser:
 
 def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
     """Handle scan command"""
+    # Process desktop environment options
+    include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
+    desktop_envs = None
+    exclude_desktop = None
+    
+    if hasattr(args, 'desktop_environments') and args.desktop_environments:
+        desktop_envs = args.desktop_environments.split(',')
+        
+    if hasattr(args, 'exclude_desktop') and args.exclude_desktop:
+        exclude_desktop = args.exclude_desktop.split(',')
+    
     print("Scanning system for packages and configuration files...")
-    app.update_system_state()
+    
+    if include_desktop:
+        print("Including desktop environment configurations")
+        if desktop_envs:
+            print(f"Specific environments: {', '.join(desktop_envs)}")
+        if exclude_desktop:
+            print(f"Excluding environments: {', '.join(exclude_desktop)}")
+    
+    app.update_system_state(
+        include_desktop=include_desktop,
+        desktop_environments=desktop_envs,
+        exclude_desktop=exclude_desktop
+    )
+    
     print("System state updated successfully.")
     return 0
 
@@ -92,8 +133,23 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     """Handle backup command"""
     print(f"Backing up system state to {args.backup_dir}...")
     
+    # Process desktop environment options
+    include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
+    desktop_envs = None
+    exclude_desktop = None
+    
+    if hasattr(args, 'desktop_environments') and args.desktop_environments:
+        desktop_envs = args.desktop_environments.split(',')
+        
+    if hasattr(args, 'exclude_desktop') and args.exclude_desktop:
+        exclude_desktop = args.exclude_desktop.split(',')
+    
     # Ensure state is up to date
-    app.update_system_state()
+    app.update_system_state(
+        include_desktop=include_desktop,
+        desktop_environments=desktop_envs,
+        exclude_desktop=exclude_desktop
+    )
     
     # Create backup
     backup_file = app.backup_state(args.backup_dir)
@@ -194,6 +250,9 @@ def handle_check(app: Migrator, args: argparse.Namespace) -> int:
     """Handle check command"""
     print("Checking for system changes since last scan...")
     
+    # Process desktop environment options
+    include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
+    
     changed_packages, changed_configs = app.execute_routine_check()
     
     # Print summary
@@ -220,7 +279,11 @@ def handle_check(app: Migrator, args: argparse.Namespace) -> int:
 def handle_service(app: Migrator, args: argparse.Namespace) -> int:
     """Handle service command (periodic checking)"""
     interval = args.interval
+    include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
+    
     print(f"Running as a service, checking every {interval} seconds...")
+    if include_desktop:
+        print("Including desktop environment configurations in checks")
     
     try:
         while True:

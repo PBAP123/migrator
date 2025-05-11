@@ -21,6 +21,7 @@ from package_managers.base import Package, PackageManager
 from config_trackers.base import ConfigFile
 from config_trackers.system_config import SystemConfigTracker
 from config_trackers.user_config import UserConfigTracker
+from config_trackers.desktop_environment import DesktopEnvironmentTracker
 
 # Import utilities
 from utils.distro import get_distro_info, DistroInfo
@@ -57,6 +58,7 @@ class Migrator:
         # Initialize config trackers
         self.system_config_tracker = SystemConfigTracker()
         self.user_config_tracker = UserConfigTracker()
+        self.desktop_env_tracker = DesktopEnvironmentTracker()
         logger.info("Initialized configuration trackers")
         
         # Load or initialize the system state
@@ -123,8 +125,15 @@ class Migrator:
         logger.info(f"Total packages found: {len(all_packages)}")
         return all_packages
     
-    def scan_config_files(self) -> List[ConfigFile]:
-        """Scan the system for configuration files"""
+    def scan_config_files(self, include_desktop=True, 
+                          desktop_environments=None, exclude_desktop=None) -> List[ConfigFile]:
+        """Scan the system for configuration files
+        
+        Args:
+            include_desktop: Whether to include desktop environment configs
+            desktop_environments: List of specific desktop environments to include
+            exclude_desktop: List of desktop environments to exclude
+        """
         all_configs = []
         
         logger.info("Scanning for system configuration files...")
@@ -137,17 +146,38 @@ class Migrator:
         all_configs.extend(user_configs)
         logger.info(f"Found {len(user_configs)} user configuration files")
         
+        if include_desktop:
+            logger.info("Scanning for desktop environment configuration files...")
+            de_configs = self.desktop_env_tracker.find_config_files(
+                include_desktop=include_desktop,
+                desktop_environments=desktop_environments,
+                exclude_desktop=exclude_desktop
+            )
+            all_configs.extend(de_configs)
+            logger.info(f"Found {len(de_configs)} desktop environment configuration files")
+        
         logger.info(f"Total configuration files found: {len(all_configs)}")
         return all_configs
     
-    def update_system_state(self) -> None:
-        """Update the system state with current packages and configuration files"""
+    def update_system_state(self, include_desktop=True, 
+                           desktop_environments=None, exclude_desktop=None) -> None:
+        """Update the system state with current packages and configuration files
+        
+        Args:
+            include_desktop: Whether to include desktop environment configs
+            desktop_environments: List of specific desktop environments to include
+            exclude_desktop: List of desktop environments to exclude
+        """
         # Scan packages
         packages = self.scan_packages()
         self.state["packages"] = [pkg.to_dict() for pkg in packages]
         
         # Scan configuration files
-        config_files = self.scan_config_files()
+        config_files = self.scan_config_files(
+            include_desktop=include_desktop,
+            desktop_environments=desktop_environments,
+            exclude_desktop=exclude_desktop
+        )
         self.state["config_files"] = [cfg.to_dict() for cfg in config_files]
         
         # Save state

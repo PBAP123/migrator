@@ -34,6 +34,12 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Flatpak packages
   - AppImages
 - **Configuration Tracking**: Identifies and tracks both system and user configuration files.
+- **Desktop Environment Backup**: Preserves your personalized desktop experience:
+  - Gnome settings and extensions
+  - KDE Plasma configurations
+  - XFCE, LXDE, Cinnamon, MATE settings
+  - Common window managers (i3, awesome, bspwm, etc.)
+  - Hardware-independent configurations only
 - **Incremental Backup**: Monitors changes to packages and configurations over time.
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
@@ -231,6 +237,35 @@ migrator check
 # Run as a service to check for changes periodically
 migrator service
 ```
+
+### Desktop Environment Configuration Backup
+
+Migrator intelligently handles desktop environment and window manager configurations:
+
+```bash
+# Backup desktop configurations with system scan
+migrator scan --include-desktop
+
+# Specify which desktop environments to include
+migrator scan --desktop-environments=gnome,kde,i3
+
+# Exclude specific desktop configurations
+migrator scan --exclude-desktop=cinnamon
+```
+
+Desktop configuration backups include:
+
+- **Gnome**: dconf settings, extensions, shell themes
+- **KDE Plasma**: Global themes, widget layouts, panel configurations
+- **XFCE/LXDE/MATE/Cinnamon**: Panel layouts, application preferences, keybindings
+- **Window Managers**: i3, awesome, bspwm, dwm, xmonad configurations
+
+Migrator automatically excludes hardware-specific settings such as:
+- Display resolution and monitor configurations
+- Specific device drivers and hardware acceleration settings
+- Machine-specific identifiers and hardware addresses
+
+This ensures your desktop experience remains consistent while avoiding conflicts when migrating between different hardware configurations.
 
 ### Setting Up as a System Service
 
