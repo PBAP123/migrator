@@ -42,6 +42,7 @@ from utils.distro import get_distro_info, DistroInfo
 from utils.config import config
 from utils.sysvar import system_variables, SystemVariables
 from utils.fstab import FstabManager
+from utils.progress import ProgressTracker, MultiProgressTracker, OperationType
 
 # Configure logging
 logging.basicConfig(
@@ -139,14 +140,23 @@ class Migrator:
         
         logger.info("Scanning for installed packages...")
         
-        for pm in self.package_managers:
-            try:
-                logger.info(f"Scanning packages with {pm.name}...")
-                packages = pm.list_installed_packages()
-                all_packages.extend(packages)
-                logger.info(f"Found {len(packages)} packages with {pm.name}")
-            except Exception as e:
-                logger.error(f"Error scanning packages with {pm.name}: {e}")
+        # Create a progress tracker for package scanning
+        with ProgressTracker(
+            operation_type=OperationType.PACKAGE_SCAN,
+            desc="Scanning for installed packages",
+            total=len(self.package_managers),
+            unit="managers"
+        ) as progress:
+            for i, pm in enumerate(self.package_managers):
+                try:
+                    progress.update(status=f"Scanning packages with {pm.name}")
+                    packages = pm.list_installed_packages()
+                    all_packages.extend(packages)
+                    progress.update(1, f"Found {len(packages)} packages with {pm.name}")
+                    logger.info(f"Found {len(packages)} packages with {pm.name}")
+                except Exception as e:
+                    logger.error(f"Error scanning packages with {pm.name}: {e}")
+                    progress.update(1, f"Error scanning with {pm.name}")
         
         logger.info(f"Total packages found: {len(all_packages)}")
         return all_packages
@@ -162,25 +172,41 @@ class Migrator:
         """
         all_configs = []
         
-        logger.info("Scanning for system configuration files...")
-        system_configs = self.system_config_tracker.find_config_files()
-        all_configs.extend(system_configs)
-        logger.info(f"Found {len(system_configs)} system configuration files")
-        
-        logger.info("Scanning for user configuration files...")
-        user_configs = self.user_config_tracker.find_config_files()
-        all_configs.extend(user_configs)
-        logger.info(f"Found {len(user_configs)} user configuration files")
-        
-        if include_desktop:
-            logger.info("Scanning for desktop environment configuration files...")
-            de_configs = self.desktop_env_tracker.find_config_files(
-                include_desktop=include_desktop,
-                desktop_environments=desktop_environments,
-                exclude_desktop=exclude_desktop
-            )
-            all_configs.extend(de_configs)
-            logger.info(f"Found {len(de_configs)} desktop environment configuration files")
+        # Create a tracker for overall config scanning
+        with ProgressTracker(
+            operation_type=OperationType.CONFIG_SCAN,
+            desc="Scanning for configuration files",
+            total=3 if include_desktop else 2,
+            unit="categories"
+        ) as progress:
+            # System configs
+            progress.update(status="Scanning system configurations")
+            logger.info("Scanning for system configuration files...")
+            system_configs = self.system_config_tracker.find_config_files()
+            all_configs.extend(system_configs)
+            progress.update(1, f"Found {len(system_configs)} system config files")
+            logger.info(f"Found {len(system_configs)} system configuration files")
+            
+            # User configs
+            progress.update(status="Scanning user configurations")
+            logger.info("Scanning for user configuration files...")
+            user_configs = self.user_config_tracker.find_config_files()
+            all_configs.extend(user_configs)
+            progress.update(1, f"Found {len(user_configs)} user config files")
+            logger.info(f"Found {len(user_configs)} user configuration files")
+            
+            # Desktop configs
+            if include_desktop:
+                progress.update(status="Scanning desktop environment configurations")
+                logger.info("Scanning for desktop environment configuration files...")
+                de_configs = self.desktop_env_tracker.find_config_files(
+                    include_desktop=include_desktop,
+                    desktop_environments=desktop_environments,
+                    exclude_desktop=exclude_desktop
+                )
+                all_configs.extend(de_configs)
+                progress.update(1, f"Found {len(de_configs)} desktop config files")
+                logger.info(f"Found {len(de_configs)} desktop environment configuration files")
         
         logger.info(f"Total configuration files found: {len(all_configs)}")
         
@@ -247,75 +273,133 @@ class Migrator:
         Args:
             backup_dir: Path to the backup directory, or None to use the configured directory
         """
-        # Use configured backup directory if none is specified
-        if backup_dir is None:
-            backup_dir = config.get_backup_dir()
-            
-        os.makedirs(backup_dir, exist_ok=True)
-        
-        # Create a timestamped backup file
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = os.path.join(backup_dir, f"migrator_backup_{timestamp}.json")
+        # Create a multi-progress tracker for the backup operation
+        multi_progress = MultiProgressTracker(overall_desc="System backup", overall_total=4)
+        multi_progress.start_overall()
         
         try:
-            # Add system variables to the state for portability
-            self.state["system_variables"] = self.system_variables.to_dict()
+            # Use configured backup directory if none is specified
+            if backup_dir is None:
+                backup_dir = config.get_backup_dir()
             
-            # Write the state file
-            with open(backup_file, 'w') as f:
-                json.dump(self.state, f, indent=2)
+            os.makedirs(backup_dir, exist_ok=True)
             
-            logger.info(f"Backed up system state to {backup_file}")
+            # Create a timestamped backup file
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = os.path.join(backup_dir, f"migrator_backup_{timestamp}.json")
             
-            # Create a directory for config files
-            configs_dir = os.path.join(backup_dir, "config_files")
-            os.makedirs(configs_dir, exist_ok=True)
+            multi_progress.update_overall(1, f"Starting backup to {backup_dir}")
             
-            # Copy all config files
-            config_count = 0
-            for config_file in self.state.get("config_files", []):
-                path = config_file["path"]
-                if os.path.exists(path) and os.access(path, os.R_OK):
-                    # Create relative path structure
-                    relative_path = path.lstrip("/")
-                    target_dir = os.path.join(configs_dir, os.path.dirname(relative_path))
-                    os.makedirs(target_dir, exist_ok=True)
+            try:
+                # Add system variables to the state for portability
+                self.state["system_variables"] = self.system_variables.to_dict()
+                
+                # Write the state file
+                with open(backup_file, 'w') as f:
+                    json.dump(self.state, f, indent=2)
+                
+                logger.info(f"Backed up system state to {backup_file}")
+                multi_progress.update_overall(1, "System state saved")
+                
+                # Create a directory for config files
+                configs_dir = os.path.join(backup_dir, "config_files")
+                os.makedirs(configs_dir, exist_ok=True)
+                
+                # Create tracker for config file copying
+                config_files = self.state.get("config_files", [])
+                config_tracker = multi_progress.create_tracker(
+                    "config_copy", 
+                    OperationType.BACKUP,
+                    total=len(config_files),
+                    desc="Copying configuration files",
+                    unit="files"
+                )
+                multi_progress.activate_tracker("config_copy")
+                config_tracker.start()
+                
+                # Copy all config files
+                config_count = 0
+                for i, config_file in enumerate(config_files):
+                    path = config_file["path"]
+                    if os.path.exists(path) and os.access(path, os.R_OK):
+                        # Create relative path structure
+                        relative_path = path.lstrip("/")
+                        target_dir = os.path.join(configs_dir, os.path.dirname(relative_path))
+                        os.makedirs(target_dir, exist_ok=True)
+                        
+                        # Copy the file
+                        target_path = os.path.join(configs_dir, relative_path)
+                        try:
+                            shutil.copy2(path, target_path)
+                            config_count += 1
+                            config_tracker.update(1, f"Copied {path}")
+                        except Exception as e:
+                            logger.error(f"Error copying config file {path}: {e}")
+                            config_tracker.update(1, f"Error copying {path}")
+                    else:
+                        config_tracker.update(1, f"Skipped {path} (not readable)")
+                
+                logger.info(f"Backed up {config_count} configuration files to {configs_dir}")
+                multi_progress.close_tracker("config_copy", f"Copied {config_count} configuration files")
+                multi_progress.update_overall(1, "Configuration files backed up")
+                
+                # Process config files to replace absolute paths with variable placeholders
+                if self.state.get("config_files"):
+                    # Create tracker for path variable processing
+                    path_tracker = multi_progress.create_tracker(
+                        "path_vars", 
+                        OperationType.BACKUP,
+                        total=len(config_files),
+                        desc="Processing path variables",
+                        unit="files"
+                    )
+                    multi_progress.activate_tracker("path_vars")
+                    path_tracker.start()
                     
-                    # Copy the file
-                    target_path = os.path.join(configs_dir, relative_path)
-                    try:
-                        shutil.copy2(path, target_path)
-                        config_count += 1
-                    except Exception as e:
-                        logger.error(f"Error copying config file {path}: {e}")
-            
-            logger.info(f"Backed up {config_count} configuration files to {configs_dir}")
-            
-            # Process config files to replace absolute paths with variable placeholders
-            if self.state.get("config_files"):
-                self._apply_path_variables_to_configs(configs_dir)
-            
-            return backup_file
-        except IOError as e:
-            logger.error(f"Error backing up system state: {e}")
+                    processed_count = self._apply_path_variables_to_configs(configs_dir, path_tracker)
+                    
+                    multi_progress.close_tracker("path_vars", f"Processed {processed_count} files with path variables")
+                    multi_progress.update_overall(1, "Path variables applied")
+                
+                multi_progress.close_all(f"Backup completed to {backup_file}")
+                return backup_file
+            except IOError as e:
+                logger.error(f"Error backing up system state: {e}")
+                multi_progress.close_all(f"Backup failed: {e}")
+                return ""
+        except Exception as e:
+            logger.error(f"Unexpected error during backup: {e}")
+            multi_progress.close_all(f"Backup failed: {e}")
             return ""
     
-    def _apply_path_variables_to_configs(self, configs_dir: str) -> None:
+    def _apply_path_variables_to_configs(self, configs_dir: str, progress_tracker: Optional[ProgressTracker] = None) -> int:
         """Process backed up config files to replace absolute paths with variables
         
         Args:
             configs_dir: Directory containing the backed up config files
+            progress_tracker: Optional progress tracker to update
+            
+        Returns:
+            Number of files processed with path variables
         """
         processed_count = 0
         
         # Process each config file
-        for config_file in self.state.get("config_files", []):
+        config_files = self.state.get("config_files", [])
+        for i, config_file in enumerate(config_files):
             path = config_file["path"]
             relative_path = path.lstrip("/")
             target_path = os.path.join(configs_dir, relative_path)
             
+            # Status message for progress tracker
+            status_msg = f"Processing {os.path.basename(path)}"
+            if progress_tracker:
+                progress_tracker.update(status=status_msg)
+            
             # Skip if file doesn't exist in backup
             if not os.path.exists(target_path) or not os.access(target_path, os.R_OK | os.W_OK):
+                if progress_tracker:
+                    progress_tracker.update(1, f"Skipped {path} (not accessible)")
                 continue
             
             try:
@@ -337,11 +421,20 @@ class Migrator:
                     with open(target_path, 'w') as f:
                         f.write(modified_content)
                     processed_count += 1
+                    if progress_tracker:
+                        progress_tracker.update(1, f"Applied path variables to {path}")
+                else:
+                    if progress_tracker:
+                        progress_tracker.update(1, f"No path variables in {path}")
             except Exception as e:
                 logger.error(f"Error processing config file {target_path}: {e}")
+                if progress_tracker:
+                    progress_tracker.update(1, f"Error processing {path}")
         
         if processed_count > 0:
             logger.info(f"Applied path variables to {processed_count} config files")
+        
+        return processed_count
     
     def restore_from_backup(self, backup_file: str, execute_plan: bool = False) -> bool:
         """Restore system state from a backup file
@@ -436,33 +529,47 @@ class Migrator:
                 for mismatch in plan["version_mismatches"]:
                     logger.info(f"  - {mismatch['name']}: backup={mismatch['backup_version']}, available={mismatch['available_version']}")
             
-            # Execute each installation command
-            for cmd in plan["installation_commands"]:
-                logger.info(f"Executing: {cmd}")
-                try:
-                    result = subprocess.run(
-                        cmd, 
-                        shell=True, 
-                        check=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
-                    logger.info(f"Command completed successfully: {cmd}")
-                    logger.debug(f"Output: {result.stdout}")
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"Command failed: {cmd}")
-                    logger.error(f"Error: {e.stderr}")
-                    # Continue with other commands even if one fails
-            
-            logger.info(f"Executed {len(plan['installation_commands'])} installation commands")
+            # Create a progress tracker for package installation
+            with ProgressTracker(
+                operation_type=OperationType.PACKAGE_INSTALL,
+                desc="Installing packages",
+                total=len(plan["installation_commands"]),
+                unit="commands"
+            ) as progress:
+                # Execute each installation command
+                for i, cmd in enumerate(plan["installation_commands"]):
+                    logger.info(f"Executing: {cmd}")
+                    progress.update(status=f"Running: {cmd}")
+                    
+                    try:
+                        result = subprocess.run(
+                            cmd, 
+                            shell=True, 
+                            check=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
+                        logger.info(f"Command completed successfully: {cmd}")
+                        logger.debug(f"Output: {result.stdout}")
+                        progress.update(1, f"Successfully executed: {cmd}")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Command failed: {cmd}")
+                        logger.error(f"Error: {e.stderr}")
+                        progress.update(1, f"Failed: {cmd}")
+                        # Continue with other commands even if one fails
             
             # Report on unavailable packages
             if plan["unavailable"]:
-                logger.warning(f"{len(plan['unavailable'])} packages could not be installed:")
+                unavailable_msg = f"{len(plan['unavailable'])} packages could not be installed"
+                logger.warning(unavailable_msg)
+                progress.close(status=f"Completed with {unavailable_msg}")
+                
                 for pkg in plan["unavailable"]:
                     reason = pkg.get('reason', 'Not available')
                     logger.warning(f"  - {pkg['name']} (source: {pkg['source']}, reason: {reason})")
+            else:
+                progress.close(status="All packages installed successfully")
             
             return True
         except Exception as e:
@@ -488,9 +595,15 @@ class Migrator:
             logger.error(f"Backup file doesn't exist: {backup_file}")
             return False
         
+        # Create a multi-progress tracker for the restore operation
+        multi_progress = MultiProgressTracker(overall_desc="Configuration restoration", overall_total=4)
+        multi_progress.start_overall()
+        
         try:
             with open(backup_file, 'r') as f:
                 backup_state = json.load(f)
+            
+            multi_progress.update_overall(1, "Loaded backup file")
             
             # Get backup directory
             backup_dir = os.path.dirname(os.path.abspath(backup_file))
@@ -502,7 +615,18 @@ class Migrator:
                 os.makedirs(configs_dir, exist_ok=True)
                 
                 # Export the config files from the backup
-                for config in backup_state.get("config_files", []):
+                config_files = backup_state.get("config_files", [])
+                config_tracker = multi_progress.create_tracker(
+                    "config_extract", 
+                    OperationType.CONFIG_RESTORE,
+                    total=len(config_files),
+                    desc="Extracting configurations",
+                    unit="files"
+                )
+                multi_progress.activate_tracker("config_extract")
+                config_tracker.start()
+                
+                for i, config in enumerate(config_files):
                     path = config["path"]
                     relative_path = path.lstrip("/")
                     if os.path.exists(path):
@@ -512,14 +636,34 @@ class Migrator:
                         try:
                             shutil.copy2(path, target_path)
                             logger.info(f"Exported config file: {path} -> {target_path}")
+                            config_tracker.update(1, f"Exported {path}")
                         except Exception as e:
                             logger.error(f"Failed to export config file {path}: {e}")
+                            config_tracker.update(1, f"Failed to export {path}")
+                    else:
+                        config_tracker.update(1, f"Skipped {path} (not found)")
+                
+                multi_progress.close_tracker("config_extract")
+            
+            multi_progress.update_overall(1, "Prepared configuration files")
             
             # Check if we have source system variables for path transformations
             source_sysvar = None
+            path_map = {}
+            transformed_count = 0
+            
             if transform_paths and "system_variables" in backup_state:
                 source_sysvar = SystemVariables.from_dict(backup_state["system_variables"])
                 logger.info(f"Using path transformations from source system: {backup_state['system_variables']}")
+                
+                path_tracker = multi_progress.create_tracker(
+                    "path_transform", 
+                    OperationType.CONFIG_RESTORE,
+                    desc="Processing path transformations",
+                    total=0,  # We'll set this later
+                    unit="files"
+                )
+                multi_progress.activate_tracker("path_transform")
                 
                 if preview_only:
                     logger.info("Path transformation preview mode - no changes will be made")
@@ -527,16 +671,30 @@ class Migrator:
                     # Preview transformations
                     path_map = source_sysvar.get_path_transformation_map()
                     if path_map:
+                        path_tracker.close(status=f"Would transform {len(path_map)} paths (preview mode)")
                         logger.info("Path transformations that would be applied:")
                         for src_path, tgt_path in path_map.items():
                             logger.info(f"  {src_path} -> {tgt_path}")
                     else:
+                        path_tracker.close(status="No path transformations needed")
                         logger.info("No path transformations needed - source and target paths match")
+                
+                multi_progress.update_overall(1, "Path transformations processed")
             elif not transform_paths:
                 logger.info("Path transformation disabled - paths will be kept as-is")
+                multi_progress.update_overall(1, "Path transformation disabled")
             
             # Check if we have portable fstab entries to restore
             if restore_fstab:
+                fstab_tracker = multi_progress.create_tracker(
+                    "fstab", 
+                    OperationType.FSTAB_PROCESSING,
+                    desc="Processing fstab entries",
+                    total=0,  # Indeterminate until we know how many entries
+                    unit="entries"
+                )
+                multi_progress.activate_tracker("fstab")
+                
                 portable_fstab_path = "/etc/fstab.portable"
                 portable_fstab_config = None
                 
@@ -558,9 +716,52 @@ class Migrator:
                     if not os.path.exists(fstab_data_path):
                         # We need to extract the portable fstab entries from backup_state
                         # and create a FstabManager with them
-                        self._restore_portable_fstab_entries(backup_state, preview_only or preview_fstab)
+                        fstab_data = None
+                        
+                        for state_config in backup_state.get("config_files", []):
+                            if state_config.get("category") == "fstab_portable" and "fstab_data" in state_config:
+                                fstab_data = state_config.get("fstab_data")
+                                break
+                        
+                        if fstab_data:
+                            fstab_entries = fstab_data.get("portable_entries", [])
+                            fstab_tracker.total = len(fstab_entries)
+                            
+                            # If we're just previewing, log the entries we would restore
+                            if preview_only or preview_fstab:
+                                logger.info("Preview: Would restore the following portable fstab entries:")
+                                for entry_data in fstab_entries:
+                                    entry = FstabEntry.from_dict(entry_data)
+                                    logger.info(f"  {entry.to_line()}")
+                                    fstab_tracker.update(1, f"Would add: {entry.to_line()}")
+                                
+                                fstab_tracker.close(status=f"Would restore {len(fstab_entries)} fstab entries (preview mode)")
+                            else:
+                                # Create a FstabManager from the data
+                                fstab_manager = FstabManager.from_dict(fstab_data)
+                                
+                                # Append the portable entries to the current fstab
+                                target_fstab = "/etc/fstab"
+                                if os.path.exists(target_fstab) and os.access(target_fstab, os.W_OK):
+                                    fstab_tracker.update(status=f"Adding entries to {target_fstab}")
+                                    result = fstab_manager.append_portable_entries(target_fstab)
+                                    if result:
+                                        logger.info(f"Successfully appended portable fstab entries to {target_fstab}")
+                                        fstab_tracker.close(status=f"Added {len(fstab_entries)} fstab entries")
+                                    else:
+                                        logger.error(f"Failed to append portable fstab entries to {target_fstab}")
+                                else:
+                                    logger.error(f"Target fstab file {target_fstab} does not exist or is not writable")
+                                fstab_tracker.close(status="Fstab not accessible")
+                        else:
+                            logger.warning("No portable fstab data found in backup")
+                            fstab_tracker.close(status="No fstab data found")
+                else:
+                    logger.info("No portable fstab entries found in backup")
+                    fstab_tracker.close(status="No portable fstab entries in backup")
             else:
                 logger.info("Skipping portable fstab entries restoration as requested")
+                multi_progress.update_overall(1, "Fstab restoration skipped")
             
             # Generate restoration plan
             plan = self.generate_config_restoration_plan(backup_file)
@@ -568,13 +769,24 @@ class Migrator:
             # Track results
             success_count = 0
             failed_count = 0
-            transformed_count = 0
+            
+            # Create a tracker for configuration file restoration
+            config_restore_tracker = multi_progress.create_tracker(
+                "config_restore", 
+                OperationType.CONFIG_RESTORE,
+                total=len(plan["restorable"]),
+                desc="Restoring configuration files",
+                unit="files"
+            )
+            multi_progress.activate_tracker("config_restore")
             
             # Restore each file
             for config in plan["restorable"]:
                 path = config["path"]
                 relative_path = path.lstrip("/")
                 source_path = os.path.join(configs_dir, relative_path)
+                
+                config_restore_tracker.update(status=f"Processing {os.path.basename(path)}")
                 
                 # If we have source system variables, transform the paths
                 transformed_path = path
@@ -588,6 +800,7 @@ class Migrator:
                             transformed_path = path.replace(src_path, tgt_path)
                             if path != transformed_path:
                                 logger.info(f"Transformed path: {path} -> {transformed_path}")
+                                transformed_count += 1
                                 path = transformed_path
                 
                 # Create target directory if needed
@@ -617,7 +830,7 @@ class Migrator:
                                     with open(source_path, 'w') as f:
                                         f.write(modified_content)
                                     transformed_count += 1
-                                    logger.debug(f"Replaced '{src_path}' with '{tgt_path}' in {source_path}")
+                                    logger.debug(f"Replaced paths in {source_path}")
                             except Exception as e:
                                 logger.error(f"Error transforming paths in {source_path}: {e}")
                         
@@ -626,14 +839,18 @@ class Migrator:
                             shutil.copy2(source_path, path)
                             logger.info(f"Restored config file: {source_path} -> {path}")
                             success_count += 1
+                            config_restore_tracker.update(1, f"Restored {path}")
                         else:
                             logger.info(f"Preview: Would restore config file: {source_path} -> {path}")
+                            config_restore_tracker.update(1, f"Would restore {path}")
                     else:
                         logger.warning(f"Config file not available in backup: {path}")
                         failed_count += 1
+                        config_restore_tracker.update(1, f"File not in backup: {path}")
                 except Exception as e:
                     logger.error(f"Failed to restore config file {path}: {e}")
                     failed_count += 1
+                    config_restore_tracker.update(1, f"Error restoring {path}")
             
             # Report problematic configs
             if plan["problematic"]:
@@ -642,78 +859,19 @@ class Migrator:
                     logger.warning(f"  - {config['path']} (status: {config.get('status', 'unknown')})")
             
             # Log summary
-            logger.info(f"Config restoration summary: {success_count} restored, {failed_count} failed, {len(plan['problematic'])} conflicts")
+            summary = f"Restored {success_count} files, {failed_count} failed, {len(plan['problematic'])} conflicts"
+            logger.info(f"Config restoration summary: {summary}")
             
             # Log transformation summary
             if transformed_count > 0:
                 logger.info(f"Applied path transformations to {transformed_count} config files")
             
+            multi_progress.close_all(f"Configuration restoration complete: {summary}")
+            
             return True
         except Exception as e:
             logger.error(f"Error executing config restoration: {e}")
-            return False
-    
-    def _restore_portable_fstab_entries(self, backup_state: Dict[str, Any], preview_only: bool = False) -> bool:
-        """Restore portable fstab entries from backup
-        
-        Args:
-            backup_state: The backup state containing config files
-            preview_only: Only show what would be restored without making changes
-            
-        Returns:
-            Whether the operation was successful
-        """
-        try:
-            # Look for the portable fstab entries in the backup state
-            portable_fstab_found = False
-            
-            # The portable fstab entries will be in a special virtual file
-            for config in backup_state.get("config_files", []):
-                if config.get("path") == "/etc/fstab.portable" and config.get("category") == "fstab_portable":
-                    portable_fstab_found = True
-                    
-                    # The content should be in a temporary JSON file in the backup directory
-                    # But we may not have it in the backup, so we need to check
-                    # Look in the state for a "fstab_data" key
-                    for state_config in backup_state.get("config_files", []):
-                        if state_config.get("category") == "fstab_portable" and "fstab_data" in state_config:
-                            fstab_data = state_config.get("fstab_data")
-                            break
-                    else:
-                        # No data found, we'll need to extract it in another way
-                        logger.warning("No portable fstab data found in backup")
-                        return False
-                    
-                    # If we're just previewing, log the entries we would restore
-                    if preview_only:
-                        logger.info("Preview: Would restore the following portable fstab entries:")
-                        for entry_data in fstab_data.get("portable_entries", []):
-                            entry = FstabEntry.from_dict(entry_data)
-                            logger.info(f"  {entry.to_line()}")
-                        return True
-                    
-                    # Create a FstabManager from the data
-                    fstab_manager = FstabManager.from_dict(fstab_data)
-                    
-                    # Append the portable entries to the current fstab
-                    target_fstab = "/etc/fstab"
-                    if os.path.exists(target_fstab) and os.access(target_fstab, os.W_OK):
-                        result = fstab_manager.append_portable_entries(target_fstab)
-                        if result:
-                            logger.info(f"Successfully appended portable fstab entries to {target_fstab}")
-                        else:
-                            logger.error(f"Failed to append portable fstab entries to {target_fstab}")
-                        return result
-                    else:
-                        logger.error(f"Target fstab file {target_fstab} does not exist or is not writable")
-                        return False
-            
-            if not portable_fstab_found:
-                logger.info("No portable fstab entries found in backup")
-                return True  # Not an error, just nothing to do
-                
-        except Exception as e:
-            logger.error(f"Error restoring portable fstab entries: {e}")
+            multi_progress.close_all(f"Configuration restoration failed: {e}")
             return False
     
     def compare_with_backup(self, backup_file: str) -> Tuple[List[Dict], List[Dict], List[Dict], List[Dict]]:

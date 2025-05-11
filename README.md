@@ -64,6 +64,68 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
 - **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
 - **Service Management**: Run as a background service with automatic checks.
+- **Interactive Progress Tracking**: Real-time visual feedback for all operations:
+  - Progress bars show overall completion percentage
+  - Live status updates for what's currently being processed
+  - Running counts of processed items and remaining tasks
+  - Spinner animations for operations with unknown duration
+  - Detailed summaries upon completion
+  - Graceful fallback when running in environments without visual progress support
+
+## Quickstart Guide
+
+### Quick Install
+
+```bash
+# 1. Install dependencies
+sudo apt install python3-venv python3-pip  # For Debian/Ubuntu
+# OR
+sudo dnf install python3-virtualenv python3-pip  # For Fedora/RHEL
+# OR
+sudo pacman -S python-virtualenv python-pip  # For Arch
+
+# 2. Clone the repository
+git clone https://github.com/PBAP123/migrator.git
+cd migrator
+
+# 3. Set up and install in one command
+python3 -m venv ~/.venvs/migrator && \
+source ~/.venvs/migrator/bin/activate && \
+pip install -r requirements.txt && \
+pip install -e .
+
+# 4. Make sure Migrator is in your PATH
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Quick Backup (with all defaults)
+
+```bash
+# Create a complete system backup with all default settings
+migrator scan --include-desktop
+migrator backup
+
+# The backup will be stored in ~/migrator_backups/
+# with a timestamped filename like migrator_backup_20230101_120000.json
+```
+
+### Quick Restore (with all defaults)
+
+```bash
+# On a new system, after installing Migrator:
+
+# 1. Find your backup file (scans all drives automatically)
+migrator locate-backup
+
+# 2. Restore from your backup with default options (with preview)
+migrator restore PATH_TO_YOUR_BACKUP.json --dry-run
+
+# 3. Perform the actual restore if the preview looks good
+migrator restore PATH_TO_YOUR_BACKUP.json --execute
+```
+
+That's it! For more detailed options and advanced usage, continue reading below.
 
 ## Requirements
 
