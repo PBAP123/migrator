@@ -196,6 +196,34 @@ class AptPackageManager(PackageManager):
         except subprocess.SubprocessError:
             return None
     
+    def is_version_available(self, package_name: str, version: str) -> bool:
+        """Check if a specific version of a package is available"""
+        try:
+            cmd = [self.apt_cache_path, 'policy', package_name]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            
+            # Extract all versions from output
+            version_pattern = r'[ \t]\d+[ \t]+http'
+            lines = result.stdout.splitlines()
+            version_section = False
+            available_versions = []
+            
+            for line in lines:
+                if line.strip().startswith('Version table:'):
+                    version_section = True
+                    continue
+                    
+                if version_section and re.search(version_pattern, line):
+                    # This line contains a version
+                    version_line = line.strip().split()[0]
+                    if version_line:
+                        available_versions.append(version_line)
+            
+            return version in available_versions
+            
+        except subprocess.SubprocessError:
+            return False
+    
     def install_package(self, package_name: str, version: Optional[str] = None) -> bool:
         """Install a package using APT"""
         if not self.has_sudo:

@@ -261,6 +261,15 @@ migrator restore ~/backups/migrator_backup_20230101_120000.json --packages-only
 # Only restore configuration files, skip package installation
 migrator restore ~/backups/migrator_backup_20230101_120000.json --configs-only
 
+# Control how package versions are handled during restoration
+migrator restore backup.json --execute --version-policy=prefer-newer  # Default - use newer versions when available
+migrator restore backup.json --execute --version-policy=exact  # Only install exact matching versions 
+migrator restore backup.json --execute --version-policy=prefer-same  # Try exact version first, accept newer if needed
+migrator restore backup.json --execute --version-policy=always-newest  # Always use the latest available versions
+
+# Allow downgrading packages if needed (when available versions are older than backup)
+migrator restore backup.json --execute --allow-downgrade
+
 # Compare the current system with a backup
 migrator compare ~/backups/migrator_backup_20230101_120000.json
 

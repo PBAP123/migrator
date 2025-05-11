@@ -80,6 +80,16 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Only install packages, skip config files')
     restore_parser.add_argument('--configs-only', action='store_true',
                              help='Only restore config files, skip packages')
+    # Version handling options
+    version_group = restore_parser.add_argument_group('version handling')
+    version_group.add_argument('--version-policy', type=str, default='prefer-newer',
+                            choices=['exact', 'prefer-same', 'prefer-newer', 'always-newest'],
+                            help='Package version policy: exact=only install exact versions, '
+                                'prefer-same=try exact version first but allow newer if needed, '
+                                'prefer-newer=prefer newer versions but allow downgrade if needed, '
+                                'always-newest=always use newest available version')
+    version_group.add_argument('--allow-downgrade', action='store_true',
+                            help='Allow downgrading packages if newer versions are installed')
     
     # Compare command
     compare_parser = subparsers.add_parser('compare', help='Compare current system with backup')
@@ -189,7 +199,17 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     # Default behavior: just restore the state without execution
     execute_plan = args.execute if hasattr(args, 'execute') else False
     
-    success = app.restore_from_backup(args.backup_file, execute_plan=execute_plan)
+    # Get version policy options
+    version_policy = args.version_policy if hasattr(args, 'version_policy') else 'prefer-newer'
+    allow_downgrade = args.allow_downgrade if hasattr(args, 'allow_downgrade') else False
+    
+    # Print version policy
+    print(f"Using version policy: {version_policy}")
+    if allow_downgrade:
+        print("Package downgrades allowed if needed")
+    
+    # Restore the state without executing installation
+    success = app.restore_from_backup(args.backup_file, execute_plan=False)
     
     if not success:
         print("Failed to restore system state.")
@@ -197,15 +217,19 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     
     print("System state restored successfully.")
     
-    # If not doing automatic execution but one of the specific flags is set
-    if not execute_plan:
-        if hasattr(args, 'packages_only') and args.packages_only:
-            print("Installing packages from backup...")
-            app.execute_installation_plan(args.backup_file)
-        
-        if hasattr(args, 'configs_only') and args.configs_only:
-            print("Restoring configuration files from backup...")
-            app.execute_config_restoration(args.backup_file)
+    # Execute installation plan if requested
+    if execute_plan or (hasattr(args, 'packages_only') and args.packages_only):
+        print("Installing packages from backup...")
+        app.execute_installation_plan(
+            args.backup_file,
+            version_policy=version_policy,
+            allow_downgrade=allow_downgrade
+        )
+    
+    # Execute config restoration if requested
+    if execute_plan or (hasattr(args, 'configs_only') and args.configs_only):
+        print("Restoring configuration files from backup...")
+        app.execute_config_restoration(args.backup_file)
     
     return 0
 

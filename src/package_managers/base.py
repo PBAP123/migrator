@@ -125,6 +125,11 @@ class PackageManager(ABC):
         pass
     
     @abstractmethod
+    def is_version_available(self, package_name: str, version: str) -> bool:
+        """Check if a specific version of a package is available"""
+        pass
+    
+    @abstractmethod
     def install_package(self, package_name: str, version: Optional[str] = None) -> bool:
         """Install a package"""
         pass

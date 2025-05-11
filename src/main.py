@@ -287,11 +287,19 @@ class Migrator:
             logger.error(f"Error restoring from backup: {e}")
             return False
     
-    def execute_installation_plan(self, backup_file: str) -> bool:
+    def execute_installation_plan(self, backup_file: str, 
+                                 version_policy: str = 'prefer-newer',
+                                 allow_downgrade: bool = False) -> bool:
         """Execute the installation plan to install packages from a backup
         
         Args:
             backup_file: Path to the backup file
+            version_policy: How to handle package versions:
+                - 'exact': Only install the exact versions from backup
+                - 'prefer-same': Try to match backup versions, accept newer if needed
+                - 'prefer-newer': Prefer newer versions, accept downgrades if needed
+                - 'always-newest': Always use the latest available version
+            allow_downgrade: Whether to allow downgrading packages
         
         Returns:
             Whether the operation was successful
@@ -302,11 +310,21 @@ class Migrator:
         
         try:
             # Generate the installation plan
-            plan = self.generate_installation_plan(backup_file)
+            plan = self.generate_installation_plan(
+                backup_file, 
+                version_policy=version_policy,
+                allow_downgrade=allow_downgrade
+            )
             
             if not plan["installation_commands"]:
                 logger.warning("No packages to install from backup")
                 return True
+            
+            # Log version mismatches
+            if plan["version_mismatches"]:
+                logger.info(f"Found {len(plan['version_mismatches'])} package version differences:")
+                for mismatch in plan["version_mismatches"]:
+                    logger.info(f"  - {mismatch['name']}: backup={mismatch['backup_version']}, available={mismatch['available_version']}")
             
             # Execute each installation command
             for cmd in plan["installation_commands"]:
@@ -333,7 +351,8 @@ class Migrator:
             if plan["unavailable"]:
                 logger.warning(f"{len(plan['unavailable'])} packages could not be installed:")
                 for pkg in plan["unavailable"]:
-                    logger.warning(f"  - {pkg['name']} (source: {pkg['source']})")
+                    reason = pkg.get('reason', 'Not available')
+                    logger.warning(f"  - {pkg['name']} (source: {pkg['source']}, reason: {reason})")
             
             return True
         except Exception as e:
@@ -463,20 +482,33 @@ class Migrator:
             logger.error(f"Error comparing with backup: {e}")
             return [], [], [], []
     
-    def generate_installation_plan(self, backup_file: str) -> Dict[str, Any]:
+    def generate_installation_plan(self, backup_file: str, 
+                                version_policy: str = 'prefer-newer',
+                                allow_downgrade: bool = False) -> Dict[str, Any]:
         """Generate a plan for installing packages from a backup file
+        
+        Args:
+            backup_file: Path to the backup file
+            version_policy: How to handle package versions:
+                - 'exact': Only install the exact versions from backup
+                - 'prefer-same': Try to match backup versions, accept newer if needed
+                - 'prefer-newer': Prefer newer versions, accept downgrades if needed
+                - 'always-newest': Always use the latest available version
+            allow_downgrade: Whether to allow downgrading packages
         
         Returns a dictionary with package installation information:
         {
             "available": list of packages available for direct installation,
             "upgradable": list of packages with newer versions available,
             "unavailable": list of packages not available on this system,
-            "installation_commands": list of commands that would install the packages
+            "installation_commands": list of commands that would install the packages,
+            "version_mismatches": list of packages with version mismatches
         }
         """
         if not os.path.exists(backup_file):
             logger.error(f"Backup file doesn't exist: {backup_file}")
-            return {"available": [], "upgradable": [], "unavailable": [], "installation_commands": []}
+            return {"available": [], "upgradable": [], "unavailable": [], 
+                    "installation_commands": [], "version_mismatches": []}
         
         try:
             with open(backup_file, 'r') as f:
@@ -486,7 +518,8 @@ class Migrator:
                 "available": [],
                 "upgradable": [],
                 "unavailable": [],
-                "installation_commands": []
+                "installation_commands": [],
+                "version_mismatches": []
             }
             
             # Get backup packages
@@ -507,12 +540,77 @@ class Migrator:
                 if pm.is_package_available(pkg.name):
                     # Check if the version matches or is newer
                     latest_version = pm.get_latest_version(pkg.name)
+                    
+                    # Get currently installed version if any
+                    current_version = pm.get_installed_version(pkg.name)
+                    
+                    # Skip if already installed with same or appropriate version based on policy
+                    if current_version:
+                        if (version_policy == 'exact' and current_version == pkg.version) or \
+                           (version_policy == 'prefer-same' and current_version >= pkg.version) or \
+                           (version_policy == 'prefer-newer' and current_version >= pkg.version) or \
+                           (version_policy == 'always-newest' and current_version >= latest_version):
+                            # Already have appropriate version installed
+                            continue
+                    
+                    # Check version policy
+                    pkg_dict = pkg.to_dict()
+                    
                     if latest_version and latest_version != pkg.version:
-                        pkg_dict = pkg.to_dict()
                         pkg_dict["latest_version"] = latest_version
-                        installation_plan["upgradable"].append(pkg_dict)
+                        
+                        # Record the version mismatch
+                        mismatch = {
+                            "name": pkg.name,
+                            "source": pkg.source,
+                            "backup_version": pkg.version,
+                            "available_version": latest_version
+                        }
+                        installation_plan["version_mismatches"].append(mismatch)
+                        
+                        # Handle based on version policy
+                        if version_policy == 'exact':
+                            # Only accept exact version matches
+                            if pm.is_version_available(pkg.name, pkg.version):
+                                pkg_dict["install_version"] = pkg.version
+                                installation_plan["available"].append(pkg_dict)
+                            else:
+                                pkg_dict["reason"] = "Exact version not available"
+                                installation_plan["unavailable"].append(pkg_dict)
+                        
+                        elif version_policy == 'prefer-same':
+                            # Try exact version, but accept newer if needed
+                            if pm.is_version_available(pkg.name, pkg.version):
+                                pkg_dict["install_version"] = pkg.version
+                                installation_plan["available"].append(pkg_dict)
+                            else:
+                                pkg_dict["install_version"] = latest_version
+                                installation_plan["upgradable"].append(pkg_dict)
+                        
+                        elif version_policy == 'prefer-newer':
+                            # Prefer newer, accept downgrade if allowed
+                            if latest_version > pkg.version:
+                                pkg_dict["install_version"] = latest_version
+                                installation_plan["upgradable"].append(pkg_dict)
+                            else:
+                                # Need to downgrade
+                                if allow_downgrade:
+                                    pkg_dict["install_version"] = pkg.version
+                                    installation_plan["available"].append(pkg_dict)
+                                else:
+                                    pkg_dict["reason"] = "Would require downgrade"
+                                    installation_plan["unavailable"].append(pkg_dict)
+                        
+                        elif version_policy == 'always-newest':
+                            # Always use latest version
+                            pkg_dict["install_version"] = latest_version
+                            installation_plan["upgradable"].append(pkg_dict)
+                    
                     else:
-                        installation_plan["available"].append(pkg.to_dict())
+                        # Version matches or no version info available
+                        pkg_dict["install_version"] = pkg.version
+                        installation_plan["available"].append(pkg_dict)
+                
                 else:
                     installation_plan["unavailable"].append(pkg.to_dict())
             
@@ -527,14 +625,27 @@ class Migrator:
                 # Only generate commands if we have packages to install
                 if pm_available or pm_upgradable:
                     if pm.name == "apt":
-                        pkg_names = [pkg["name"] for pkg in pm_available + pm_upgradable]
-                        if pkg_names:
-                            cmd = f"sudo apt install -y {' '.join(pkg_names)}"
+                        # For APT, we can specify versions
+                        pkg_specs = []
+                        for pkg in pm_available + pm_upgradable:
+                            if version_policy == 'exact' or \
+                               (version_policy == 'prefer-same' and 'install_version' in pkg and pkg['install_version'] == pkg['version']):
+                                # Specify exact version
+                                pkg_specs.append(f"{pkg['name']}={pkg['install_version']}")
+                            else:
+                                # Just the package name for latest
+                                pkg_specs.append(pkg['name'])
+                        
+                        if pkg_specs:
+                            cmd = f"sudo apt install -y {' '.join(pkg_specs)}"
                             installation_plan["installation_commands"].append(cmd)
                     
                     elif pm.name == "snap":
                         for pkg in pm_available + pm_upgradable:
-                            cmd = f"sudo snap install {pkg['name']}"
+                            if version_policy == 'exact' and 'install_version' in pkg:
+                                cmd = f"sudo snap install {pkg['name']} --revision={pkg['install_version']}"
+                            else:
+                                cmd = f"sudo snap install {pkg['name']}"
                             installation_plan["installation_commands"].append(cmd)
                     
                     elif pm.name == "flatpak":
@@ -548,7 +659,8 @@ class Migrator:
             
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Error generating installation plan: {e}")
-            return {"available": [], "upgradable": [], "unavailable": [], "installation_commands": []}
+            return {"available": [], "upgradable": [], "unavailable": [], 
+                    "installation_commands": [], "version_mismatches": []}
     
     def _get_package_manager_for_source(self, source: str) -> Optional[PackageManager]:
         """Get the appropriate package manager for a given source"""
