@@ -7,6 +7,7 @@ import subprocess
 import json
 import os
 import logging
+import shutil
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -20,42 +21,84 @@ class SnapPackageManager(PackageManager):
     def __init__(self):
         super().__init__('snap')
     
-    def list_installed_packages(self) -> List[Package]:
-        """List all installed snap packages"""
-        if not self.available:
-            logger.warning("Snap package manager not available")
+    def list_installed_packages(self, test_mode=False) -> List[Package]:
+        """List all installed snap packages
+        
+        Args:
+            test_mode: If True, only process a small number of packages for testing
+        """
+        if not shutil.which('snap'):
+            logger.warning("Snap command not found in PATH")
+            print("Snap command not found - skipping snap package scan")
             return []
         
         packages = []
         
         try:
-            # Get list of installed snaps in JSON format
-            cmd = ['snap', 'list', '--json']
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            # First check if snap is working properly
+            print("Checking for installed Snap packages...")
+            check_cmd = ['snap', 'list']
+            check_result = subprocess.run(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
             
-            # Parse JSON output
-            snaps_data = json.loads(result.stdout)
+            if check_result.returncode != 0:
+                logger.warning(f"Error checking snap: {check_result.stderr.strip()}")
+                print(f"Error accessing snap: {check_result.stderr.strip()}")
+                return []
+                
+            # If the output has less than 2 lines (just header or empty), no snaps are installed
+            snap_lines = check_result.stdout.strip().splitlines()
+            if len(snap_lines) < 2:
+                logger.info("No Snap packages installed (beyond core system snaps)")
+                print("No user-installed Snap packages found")
+                return []
+                
+            # Get regular list output first (more reliable than JSON)
+            snaps = []
+            for line in snap_lines[1:]:  # Skip header
+                parts = line.split()
+                if len(parts) >= 2:
+                    name = parts[0]
+                    version = parts[1]
+                    # Skip core system snaps
+                    if name not in ['core', 'core18', 'core20', 'core22', 'snapd']:
+                        snaps.append({
+                            'name': name,
+                            'version': version
+                        })
             
-            for snap in snaps_data:
+            # Limit in test mode
+            if test_mode and snaps:
+                snaps = snaps[:5]  # Only process 5 snaps in test mode
+                logger.info("Running in TEST MODE - only processing 5 Snap packages")
+                
+            total_pkgs = len(snaps)
+            logger.info(f"Found {total_pkgs} Snap packages to process")
+            print(f"Processing {total_pkgs} Snap packages...")
+            
+            # Process each snap
+            for i, snap in enumerate(snaps):
                 name = snap.get('name', '')
                 version = snap.get('version', '')
                 
-                # Get more detailed info
-                pkg_info = self.get_package_info(name)
-                if pkg_info:
-                    packages.append(pkg_info)
-                else:
-                    # Basic info only
-                    packages.append(Package(
-                        name=name,
-                        version=version,
-                        source='snap'
-                    ))
+                progress_pct = ((i + 1) / total_pkgs) * 100
+                print(f"\rProcessing Snap packages: {i+1}/{total_pkgs} ({progress_pct:.1f}%)      ", end="", flush=True)
+                
+                # Basic info only for faster processing
+                packages.append(Package(
+                    name=name,
+                    version=version,
+                    source='snap',
+                    manually_installed=True  # All snaps are manually installed
+                ))
+            
+            if total_pkgs > 0:
+                print(f"\rCompleted processing {total_pkgs} Snap packages             ")
             
             return packages
             
-        except (subprocess.SubprocessError, json.JSONDecodeError) as e:
+        except subprocess.SubprocessError as e:
             logger.error(f"Error listing installed snap packages: {e}")
+            print(f"Failed to list Snap packages: {str(e)}")
             return []
     
     def is_package_available(self, package_name: str) -> bool:

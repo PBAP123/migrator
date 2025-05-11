@@ -62,6 +62,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                            help='Comma-separated list of desktop environments to include (e.g., gnome,kde,i3)')
     scan_parser.add_argument('--exclude-desktop', 
                            help='Comma-separated list of desktop environments to exclude')
+    scan_parser.add_argument('--test-mode', action='store_true',
+                           help='Run in test mode with limited package scanning (for development/debugging)')
     
     # Backup command
     backup_parser = subparsers.add_parser('backup', help='Backup system state')
@@ -178,6 +180,7 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
     include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
     desktop_envs = None
     exclude_desktop = None
+    test_mode = args.test_mode if hasattr(args, 'test_mode') else False
     
     if hasattr(args, 'desktop_environments') and args.desktop_environments:
         desktop_envs = args.desktop_environments.split(',')
@@ -194,10 +197,14 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
         if exclude_desktop:
             print(f"Excluding environments: {', '.join(exclude_desktop)}")
     
+    if test_mode:
+        print("WARNING: Using TEST MODE - only scanning a limited number of packages")
+    
     app.update_system_state(
         include_desktop=include_desktop,
         desktop_environments=desktop_envs,
-        exclude_desktop=exclude_desktop
+        exclude_desktop=exclude_desktop,
+        test_mode=test_mode
     )
     
     print("System state updated successfully.")

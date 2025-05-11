@@ -39,15 +39,34 @@ class AppImageManager(PackageManager):
             "/usr/local/bin"
         ]
     
-    def list_installed_packages(self) -> List[Package]:
-        """List all AppImage applications found in common locations"""
+    def list_installed_packages(self, test_mode=False) -> List[Package]:
+        """List all AppImage applications found in common locations
+        
+        Args:
+            test_mode: If True, only process a small number of packages for testing
+        """
         packages = []
         
+        print("Scanning for AppImage applications...")
+        logger.info("Scanning for AppImage applications in common locations")
+        
+        # Create a list to hold all found AppImage paths
+        appimage_paths = []
+        
+        # Count all checked locations for progress reporting
+        total_locations = sum(1 for location in self.common_locations if os.path.exists(location))
+        
+        if total_locations == 0:
+            print("No AppImage locations found - skipping AppImage scan")
+            return []
+            
         # Search for .AppImage files in common locations
-        for location in self.common_locations:
+        for i, location in enumerate(self.common_locations):
             if not os.path.exists(location):
                 continue
-                
+            
+            print(f"\rScanning location {i+1}/{total_locations}: {location}", end="", flush=True)
+            
             # Search both directly in the directory and one level down
             # This covers both ~/Applications/app.AppImage and ~/Applications/AppName/app.AppImage
             patterns = [
@@ -58,21 +77,42 @@ class AppImageManager(PackageManager):
             for pattern in patterns:
                 for appimage_path in glob.glob(pattern):
                     if os.path.isfile(appimage_path) and os.access(appimage_path, os.X_OK):
-                        # Extract app info from the AppImage file
-                        name = self._get_appimage_name(appimage_path)
-                        version = self._extract_version_from_filename(appimage_path)
-                        
-                        # Try to get more detailed info
-                        install_date = datetime.fromtimestamp(os.path.getmtime(appimage_path))
-                        
-                        packages.append(Package(
-                            name=name,
-                            version=version,
-                            description=f"AppImage found at {appimage_path}",
-                            source='appimage',
-                            install_date=install_date,
-                            manually_installed=True  # AppImages are manually installed
-                        ))
+                        appimage_paths.append(appimage_path)
+        
+        # Limit in test mode
+        if test_mode and appimage_paths:
+            appimage_paths = appimage_paths[:5]  # Only process 5 AppImages in test mode
+            logger.info("Running in TEST MODE - only processing 5 AppImage files")
+        
+        total_appimages = len(appimage_paths)
+        logger.info(f"Found {total_appimages} AppImage files to process")
+        print(f"\rProcessing {total_appimages} AppImage files...                                 ")
+        
+        # Process each AppImage
+        for i, appimage_path in enumerate(appimage_paths):
+            progress_pct = ((i + 1) / total_appimages) * 100 if total_appimages > 0 else 100
+            print(f"\rProcessing AppImage files: {i+1}/{total_appimages} ({progress_pct:.1f}%)      ", end="", flush=True)
+            
+            # Extract app info from the AppImage file
+            name = self._get_appimage_name(appimage_path)
+            version = self._extract_version_from_filename(appimage_path)
+            
+            # Get modified time for install date
+            install_date = datetime.fromtimestamp(os.path.getmtime(appimage_path))
+            
+            packages.append(Package(
+                name=name,
+                version=version,
+                description=f"AppImage found at {appimage_path}",
+                source='appimage',
+                install_date=install_date,
+                manually_installed=True  # AppImages are manually installed
+            ))
+        
+        if total_appimages > 0:
+            print(f"\rCompleted processing {total_appimages} AppImage files                         ")
+        else:
+            print("No AppImage files found")
         
         return packages
     

@@ -38,42 +38,88 @@ class AptPackageManager(PackageManager):
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
     
-    def list_installed_packages(self) -> List[Package]:
-        """List all packages installed via APT"""
+    def list_installed_packages(self, test_mode=False) -> List[Package]:
+        """List all packages installed via APT
+        
+        Args:
+            test_mode: If True, only process a small number of packages for testing
+        """
         packages = []
         
         try:
+            # First get a quick count of installed packages for feedback
+            count_cmd = [self.dpkg_path, '--list']
+            count_result = subprocess.run(count_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            
+            # In test mode, limit to a small number of packages
+            pkg_lines = [line for line in count_result.stdout.splitlines() if line.startswith('ii')]
+            if test_mode:
+                pkg_lines = pkg_lines[:10]  # Only process 10 packages in test mode
+                logger.info("Running in TEST MODE - only processing 10 packages")
+                
+            total_pkgs = len(pkg_lines)
+            
+            logger.info(f"Found {total_pkgs} APT packages to process")
+            print(f"Processing {total_pkgs} APT packages, this may take a while...")
+            
             # Get list of installed packages with their versions
             cmd = [self.dpkg_path, '--list']
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
             
             # Parse dpkg output
+            counter = 0
+            progress_interval = max(1, total_pkgs // 20)  # Show progress at 5% intervals
+            
             for line in result.stdout.splitlines():
                 # Skip header lines
                 if not line.startswith('ii'):
                     continue
                 
+                # In test mode, only process a limited number of packages
+                if test_mode and counter >= 10:
+                    break
+                    
                 parts = line.split()
                 if len(parts) >= 3:
                     name = parts[1]
                     version = parts[2]
                     
-                    # Get description and other details
-                    pkg_info = self.get_package_info(name)
-                    if pkg_info:
-                        packages.append(pkg_info)
-                    else:
-                        # Basic info only
-                        packages.append(Package(
-                            name=name,
-                            version=version,
-                            source='apt'
-                        ))
+                    counter += 1
+                    if counter % progress_interval == 0 or counter == total_pkgs:
+                        progress_pct = (counter / total_pkgs) * 100
+                        print(f"\rProcessing APT packages: {counter}/{total_pkgs} ({progress_pct:.1f}%)      ", end="", flush=True)
+                    
+                    # Get basic package info without using apt-mark for every package
+                    # This makes the process much faster
+                    packages.append(Package(
+                        name=name,
+                        version=version,
+                        source='apt',
+                        manually_installed=False  # Will be updated later
+                    ))
             
+            print("\rAPT package list collected. Getting installation details...      ")
+            
+            # Now get manually installed status in a single call
+            manual_pkgs = set()
+            try:
+                manual_cmd = ['apt-mark', 'showmanual']
+                manual_result = subprocess.run(manual_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+                manual_pkgs = set(manual_result.stdout.strip().split('\n'))
+            except subprocess.SubprocessError as e:
+                logger.error(f"Error getting manually installed packages: {e}")
+            
+            # Update manually installed status
+            for pkg in packages:
+                if pkg.name in manual_pkgs:
+                    pkg.manually_installed = True
+            
+            print(f"Completed processing {len(packages)} APT packages")
             return packages
         
         except subprocess.SubprocessError as e:
             logger.error(f"Error listing installed packages: {e}")
+            print("Failed to list APT packages. See log for details.")
             return []
     
     def get_manually_installed_packages(self) -> List[Package]:

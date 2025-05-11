@@ -134,11 +134,18 @@ class Migrator:
         except IOError as e:
             logger.error(f"Error saving system state: {e}")
     
-    def scan_packages(self) -> List[Package]:
-        """Scan the system for installed packages"""
+    def scan_packages(self, test_mode=False) -> List[Package]:
+        """Scan the system for installed packages
+        
+        Args:
+            test_mode: If True, run in test mode with limited package scanning
+        """
         all_packages = []
         
         logger.info("Scanning for installed packages...")
+        print("Starting package scan. This process may take several minutes depending on how many packages are installed.")
+        if test_mode:
+            print("Running in TEST MODE - only processing a limited number of packages")
         
         # Create a progress tracker for package scanning
         with ProgressTracker(
@@ -149,16 +156,33 @@ class Migrator:
         ) as progress:
             for i, pm in enumerate(self.package_managers):
                 try:
+                    manager_name = pm.name.upper()
+                    print(f"\n--- Scanning {manager_name} packages ({i+1}/{len(self.package_managers)} package managers) ---")
                     progress.update(status=f"Scanning packages with {pm.name}")
-                    packages = pm.list_installed_packages()
+                    
+                    start_time = time.time()
+                    # Call list_installed_packages with test_mode if the method supports it
+                    if hasattr(pm, 'list_installed_packages') and 'test_mode' in pm.list_installed_packages.__code__.co_varnames:
+                        packages = pm.list_installed_packages(test_mode=test_mode)
+                    else:
+                        packages = pm.list_installed_packages()
+                    scan_time = time.time() - start_time
+                    
                     all_packages.extend(packages)
                     progress.update(1, f"Found {len(packages)} packages with {pm.name}")
-                    logger.info(f"Found {len(packages)} packages with {pm.name}")
+                    logger.info(f"Found {len(packages)} packages with {pm.name} in {scan_time:.2f} seconds")
+                    print(f"Completed {manager_name} scan: found {len(packages)} packages in {scan_time:.2f} seconds")
                 except Exception as e:
                     logger.error(f"Error scanning packages with {pm.name}: {e}")
                     progress.update(1, f"Error scanning with {pm.name}")
+                    print(f"Failed to scan {pm.name} packages: {str(e)}")
         
-        logger.info(f"Total packages found: {len(all_packages)}")
+        manual_count = sum(1 for pkg in all_packages if getattr(pkg, 'manually_installed', False))
+        
+        total_msg = f"Total packages found: {len(all_packages)} (including {manual_count} manually installed)"
+        logger.info(total_msg)
+        print(f"\n{total_msg}")
+        
         return all_packages
     
     def scan_config_files(self, include_desktop=True, 
@@ -227,7 +251,7 @@ class Migrator:
     
     def update_system_state(self, include_desktop=True, 
                            desktop_environments=None, exclude_desktop=None,
-                           include_fstab_portability=True) -> None:
+                           include_fstab_portability=True, test_mode=False) -> None:
         """Update the system state with current packages and configuration files
         
         Args:
@@ -235,9 +259,10 @@ class Migrator:
             desktop_environments: List of specific desktop environments to include
             exclude_desktop: List of desktop environments to exclude
             include_fstab_portability: Whether to include portable fstab entries
+            test_mode: If True, run in test mode with limited package scanning
         """
         # Scan packages
-        packages = self.scan_packages()
+        packages = self.scan_packages(test_mode=test_mode)
         
         # Set fstab portability flag in system config tracker
         self.system_config_tracker.include_fstab_portability = include_fstab_portability

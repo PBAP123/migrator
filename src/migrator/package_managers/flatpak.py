@@ -7,6 +7,7 @@ import subprocess
 import json
 import os
 import logging
+import shutil
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -20,42 +21,84 @@ class FlatpakPackageManager(PackageManager):
     def __init__(self):
         super().__init__('flatpak')
     
-    def list_installed_packages(self) -> List[Package]:
-        """List all installed flatpak packages"""
-        if not self.available:
-            logger.warning("Flatpak package manager not available")
+    def list_installed_packages(self, test_mode=False) -> List[Package]:
+        """List all installed flatpak packages
+        
+        Args:
+            test_mode: If True, only process a small number of packages for testing
+        """
+        if not shutil.which('flatpak'):
+            logger.warning("Flatpak command not found in PATH")
+            print("Flatpak command not found - skipping flatpak package scan")
             return []
         
         packages = []
         
         try:
-            # Get list of installed flatpaks in JSON format
-            cmd = ['flatpak', 'list', '--app', '--columns=application,version,installation,branch', '--show-details', '--json']
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            # First check if any flatpaks are installed
+            print("Checking for installed Flatpak packages...")
+            check_cmd = ['flatpak', 'list', '--app', '--columns=application']
+            check_result = subprocess.run(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
             
-            # Parse JSON output
-            flatpaks_data = json.loads(result.stdout)
+            if check_result.returncode != 0:
+                logger.warning(f"Error checking flatpak: {check_result.stderr.strip()}")
+                print(f"Error accessing flatpak: {check_result.stderr.strip()}")
+                return []
+                
+            # If the output has less than 2 lines (just header or empty), no flatpaks are installed
+            if len(check_result.stdout.strip().splitlines()) < 2:
+                logger.info("No Flatpak packages installed")
+                print("No Flatpak packages installed")
+                return []
+                
+            # Get list of installed flatpaks
+            print("Getting list of installed Flatpak packages...")
+            list_cmd = ['flatpak', 'list', '--app', '--columns=application,version,installation,branch', '--show-details']
+            result = subprocess.run(list_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
             
-            for flatpak in flatpaks_data:
+            # Parse output
+            flatpaks = []
+            for line in result.stdout.strip().splitlines()[1:]:  # Skip header
+                parts = line.split()
+                if len(parts) >= 2:
+                    flatpaks.append({
+                        'application': parts[0],
+                        'version': parts[1] if len(parts) > 1 else ''
+                    })
+            
+            # Limit in test mode
+            if test_mode and flatpaks:
+                flatpaks = flatpaks[:5]  # Only process 5 flatpaks in test mode
+                logger.info("Running in TEST MODE - only processing 5 Flatpak packages")
+                
+            total_pkgs = len(flatpaks)
+            logger.info(f"Found {total_pkgs} Flatpak packages to process")
+            print(f"Processing {total_pkgs} Flatpak packages...")
+            
+            # Process each flatpak
+            for i, flatpak in enumerate(flatpaks):
                 app_id = flatpak.get('application', '')
                 version = flatpak.get('version', '')
                 
-                # Get more detailed info
-                pkg_info = self.get_package_info(app_id)
-                if pkg_info:
-                    packages.append(pkg_info)
-                else:
-                    # Basic info only
-                    packages.append(Package(
-                        name=app_id,
-                        version=version,
-                        source='flatpak'
-                    ))
+                progress_pct = ((i + 1) / total_pkgs) * 100
+                print(f"\rProcessing Flatpak packages: {i+1}/{total_pkgs} ({progress_pct:.1f}%)      ", end="", flush=True)
+                
+                # Basic info only for faster processing
+                packages.append(Package(
+                    name=app_id,
+                    version=version,
+                    source='flatpak',
+                    manually_installed=True  # All flatpaks are manually installed
+                ))
+            
+            if total_pkgs > 0:
+                print(f"\rCompleted processing {total_pkgs} Flatpak packages             ")
             
             return packages
             
-        except (subprocess.SubprocessError, json.JSONDecodeError) as e:
+        except subprocess.SubprocessError as e:
             logger.error(f"Error listing installed flatpak packages: {e}")
+            print(f"Failed to list Flatpak packages: {str(e)}")
             return []
     
     def is_package_available(self, package_name: str) -> bool:
