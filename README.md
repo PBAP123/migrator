@@ -29,7 +29,7 @@ A system migration utility for Linux that tracks installed packages and configur
 
 ```bash
 # Clone the repository
-git clone https://github.com/n3o/migrator.git
+git clone https://github.com/PBAP123/migrator.git
 cd migrator
 
 # Make sure you have Python 3.6+ installed
