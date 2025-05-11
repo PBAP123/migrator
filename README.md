@@ -45,6 +45,10 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Define any local folder or network share as your backup location
   - Configuration persists between sessions
   - TUI interface for easy management
+- **Dynamic Path Handling**: Intelligent system-specific path handling:
+  - Automatically detects usernames and home directory paths during backup
+  - Adapts paths to match the target system during restoration
+  - Makes configuration files portable across different systems
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
 - **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
@@ -250,8 +254,11 @@ Once installed:
 # Scan the system and update the system state
 migrator scan
 
-# Backup the current system state to a directory
+# Backup with dynamic path variable handling (enabled by default)
 migrator backup ~/backups
+
+# Backup without path variable substitution
+migrator backup ~/backups --no-path-variables
 
 # View or modify the default backup location
 migrator config get-backup-dir  # Show current backup directory
@@ -260,11 +267,14 @@ migrator config set-backup-dir /path/to/backup  # Set a new default backup locat
 # Create a backup using the default location (no path needed)
 migrator backup
 
-# Restore the system state from a backup file
-migrator restore ~/backups/migrator_backup_20230101_120000.json
-
-# Restore and automatically install all packages and configuration files
+# Restore with automatic path transformation (enabled by default)
 migrator restore ~/backups/migrator_backup_20230101_120000.json --execute
+
+# Restore without transforming paths (keep them as-is from the source system)
+migrator restore ~/backups/migrator_backup_20230101_120000.json --execute --no-path-transform
+
+# Preview path transformations without actually making changes
+migrator restore ~/backups/migrator_backup_20230101_120000.json --path-transform-preview
 
 # Only install packages from backup, skip config files
 migrator restore ~/backups/migrator_backup_20230101_120000.json --packages-only

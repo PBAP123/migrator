@@ -40,6 +40,7 @@ from config_trackers.desktop_environment import DesktopEnvironmentTracker
 # Import utilities
 from utils.distro import get_distro_info, DistroInfo
 from utils.config import config
+from utils.sysvar import system_variables, SystemVariables
 
 # Configure logging
 logging.basicConfig(
@@ -84,6 +85,10 @@ class Migrator:
         backup_dir = config.get_backup_dir()
         os.makedirs(backup_dir, exist_ok=True)
         logger.info(f"Using backup directory: {backup_dir}")
+        
+        # Initialize system variables
+        self.system_variables = system_variables
+        logger.info(f"Using system variables: username={self.system_variables.username}, home={self.system_variables.home_dir}")
     
     def _load_state(self) -> Dict[str, Any]:
         """Load the system state from disk or initialize a new one"""
@@ -220,6 +225,9 @@ class Migrator:
         backup_file = os.path.join(backup_dir, f"migrator_backup_{timestamp}.json")
         
         try:
+            # Add system variables to the state for portability
+            self.state["system_variables"] = self.system_variables.to_dict()
+            
             # Write the state file
             with open(backup_file, 'w') as f:
                 json.dump(self.state, f, indent=2)
@@ -250,10 +258,57 @@ class Migrator:
             
             logger.info(f"Backed up {config_count} configuration files to {configs_dir}")
             
+            # Process config files to replace absolute paths with variable placeholders
+            if self.state.get("config_files"):
+                self._apply_path_variables_to_configs(configs_dir)
+            
             return backup_file
         except IOError as e:
             logger.error(f"Error backing up system state: {e}")
             return ""
+    
+    def _apply_path_variables_to_configs(self, configs_dir: str) -> None:
+        """Process backed up config files to replace absolute paths with variables
+        
+        Args:
+            configs_dir: Directory containing the backed up config files
+        """
+        processed_count = 0
+        
+        # Process each config file
+        for config_file in self.state.get("config_files", []):
+            path = config_file["path"]
+            relative_path = path.lstrip("/")
+            target_path = os.path.join(configs_dir, relative_path)
+            
+            # Skip if file doesn't exist in backup
+            if not os.path.exists(target_path) or not os.access(target_path, os.R_OK | os.W_OK):
+                continue
+            
+            try:
+                # Read the file content
+                with open(target_path, 'r', errors='replace') as f:
+                    content = f.read()
+                
+                # Replace paths with variable placeholders
+                modified_content = content
+                
+                # Check for various path patterns to replace
+                for var_name, value in self.system_variables.placeholders.items():
+                    if value and len(value) > 1:  # Skip empty or single-char values
+                        # Variables like $HOME might appear in config files
+                        modified_content = modified_content.replace(value, f"${{{var_name}}}")
+                
+                # Write the modified content if changes were made
+                if modified_content != content:
+                    with open(target_path, 'w') as f:
+                        f.write(modified_content)
+                    processed_count += 1
+            except Exception as e:
+                logger.error(f"Error processing config file {target_path}: {e}")
+        
+        if processed_count > 0:
+            logger.info(f"Applied path variables to {processed_count} config files")
     
     def restore_from_backup(self, backup_file: str, execute_plan: bool = False) -> bool:
         """Restore system state from a backup file
@@ -287,6 +342,14 @@ class Migrator:
             self._save_state()
             
             logger.info(f"Restored system state from {backup_file}")
+            
+            # Load source system variables if available
+            if "system_variables" in backup_state:
+                source_sysvar = SystemVariables.from_dict(backup_state["system_variables"])
+                logger.info(f"Loaded source system variables from backup: {backup_state['system_variables']}")
+                
+                # Set the source system variables for path transformations
+                self.source_system_variables = source_sysvar
             
             # Execute installation plan if requested
             if execute_plan:
@@ -373,11 +436,13 @@ class Migrator:
             logger.error(f"Error executing installation plan: {e}")
             return False
     
-    def execute_config_restoration(self, backup_file: str) -> bool:
+    def execute_config_restoration(self, backup_file: str, transform_paths: bool = True, preview_only: bool = False) -> bool:
         """Restore configuration files from a backup
         
         Args:
             backup_file: Path to the backup file
+            transform_paths: Whether to transform paths to match target system
+            preview_only: Only show transformations without making changes
         
         Returns:
             Whether the operation was successful
@@ -413,12 +478,33 @@ class Migrator:
                         except Exception as e:
                             logger.error(f"Failed to export config file {path}: {e}")
             
+            # Check if we have source system variables for path transformations
+            source_sysvar = None
+            if transform_paths and "system_variables" in backup_state:
+                source_sysvar = SystemVariables.from_dict(backup_state["system_variables"])
+                logger.info(f"Using path transformations from source system: {backup_state['system_variables']}")
+                
+                if preview_only:
+                    logger.info("Path transformation preview mode - no changes will be made")
+                    
+                    # Preview transformations
+                    path_map = source_sysvar.get_path_transformation_map()
+                    if path_map:
+                        logger.info("Path transformations that would be applied:")
+                        for src_path, tgt_path in path_map.items():
+                            logger.info(f"  {src_path} -> {tgt_path}")
+                    else:
+                        logger.info("No path transformations needed - source and target paths match")
+            elif not transform_paths:
+                logger.info("Path transformation disabled - paths will be kept as-is")
+            
             # Generate restoration plan
             plan = self.generate_config_restoration_plan(backup_file)
             
             # Track results
             success_count = 0
             failed_count = 0
+            transformed_count = 0
             
             # Restore each file
             for config in plan["restorable"]:
@@ -426,17 +512,58 @@ class Migrator:
                 relative_path = path.lstrip("/")
                 source_path = os.path.join(configs_dir, relative_path)
                 
+                # If we have source system variables, transform the paths
+                transformed_path = path
+                if source_sysvar and transform_paths:
+                    # Get the path transformations from source to target system
+                    path_map = source_sysvar.get_path_transformation_map()
+                    
+                    # Transform the target path if needed
+                    for src_path, tgt_path in path_map.items():
+                        if src_path in path:
+                            transformed_path = path.replace(src_path, tgt_path)
+                            if path != transformed_path:
+                                logger.info(f"Transformed path: {path} -> {transformed_path}")
+                                path = transformed_path
+                
                 # Create target directory if needed
                 target_dir = os.path.dirname(path)
                 os.makedirs(target_dir, exist_ok=True)
                 
                 try:
                     # Check if we have the config file in our backup
-                    if os.path.exists(source_path):
-                        # Copy the file to its original location
-                        shutil.copy2(source_path, path)
-                        logger.info(f"Restored config file: {source_path} -> {path}")
-                        success_count += 1
+                    if os.path.exists(source_path) and os.access(source_path, os.R_OK):
+                        # Process the file to replace variables
+                        if source_sysvar and transform_paths and not preview_only:
+                            try:
+                                # Read the file content
+                                with open(source_path, 'r', errors='replace') as f:
+                                    content = f.read()
+                                
+                                # Replace system-specific paths
+                                modified_content = content
+                                
+                                # Apply path transformations
+                                for src_path, tgt_path in path_map.items():
+                                    if src_path and tgt_path and src_path in content:
+                                        modified_content = modified_content.replace(src_path, tgt_path)
+                                
+                                # Write the modified content if changes were made
+                                if modified_content != content:
+                                    with open(source_path, 'w') as f:
+                                        f.write(modified_content)
+                                    transformed_count += 1
+                                    logger.debug(f"Replaced '{src_path}' with '{tgt_path}' in {source_path}")
+                            except Exception as e:
+                                logger.error(f"Error transforming paths in {source_path}: {e}")
+                        
+                        # Copy the file to its original location (unless preview mode)
+                        if not preview_only:
+                            shutil.copy2(source_path, path)
+                            logger.info(f"Restored config file: {source_path} -> {path}")
+                            success_count += 1
+                        else:
+                            logger.info(f"Preview: Would restore config file: {source_path} -> {path}")
                     else:
                         logger.warning(f"Config file not available in backup: {path}")
                         failed_count += 1
@@ -452,6 +579,10 @@ class Migrator:
             
             # Log summary
             logger.info(f"Config restoration summary: {success_count} restored, {failed_count} failed, {len(plan['problematic'])} conflicts")
+            
+            # Log transformation summary
+            if transformed_count > 0:
+                logger.info(f"Applied path transformations to {transformed_count} config files")
             
             return True
         except Exception as e:

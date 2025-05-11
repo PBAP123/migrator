@@ -72,6 +72,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Comma-separated list of desktop environments to include (e.g., gnome,kde,i3)')
     backup_parser.add_argument('--exclude-desktop', 
                              help='Comma-separated list of desktop environments to exclude')
+    backup_parser.add_argument('--no-path-variables', action='store_true',
+                             help='Disable dynamic path variable substitution for improved portability')
     
     # Restore command
     restore_parser = subparsers.add_parser('restore', help='Restore system state from backup')
@@ -92,6 +94,13 @@ def setup_argparse() -> argparse.ArgumentParser:
                                 'always-newest=always use newest available version')
     version_group.add_argument('--allow-downgrade', action='store_true',
                             help='Allow downgrading packages if newer versions are installed')
+    
+    # Path variables options
+    path_group = restore_parser.add_argument_group('path handling')
+    path_group.add_argument('--no-path-transform', action='store_true',
+                          help='Disable automatic transformation of paths in config files')
+    path_group.add_argument('--path-transform-preview', action='store_true',
+                          help='Show what paths would be transformed without making changes')
     
     # Compare command
     compare_parser = subparsers.add_parser('compare', help='Compare current system with backup')
@@ -190,6 +199,11 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     if hasattr(args, 'exclude_desktop') and args.exclude_desktop:
         exclude_desktop = args.exclude_desktop.split(',')
     
+    # Handle path variables option
+    use_path_variables = not args.no_path_variables if hasattr(args, 'no_path_variables') else True
+    if not use_path_variables:
+        print("Dynamic path variable substitution disabled")
+    
     # Ensure state is up to date
     app.update_system_state(
         include_desktop=include_desktop,
@@ -202,6 +216,8 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     
     if backup_file:
         print(f"Backup created successfully: {backup_file}")
+        if use_path_variables:
+            print("Path variables applied to configuration files for improved portability")
         return 0
     else:
         print("Failed to create backup.")
@@ -222,6 +238,17 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     print(f"Using version policy: {version_policy}")
     if allow_downgrade:
         print("Package downgrades allowed if needed")
+    
+    # Process path transformation options
+    transform_paths = not args.no_path_transform if hasattr(args, 'no_path_transform') else True
+    preview_only = args.path_transform_preview if hasattr(args, 'path_transform_preview') else False
+    
+    if not transform_paths:
+        print("Path transformation disabled - paths will be kept as-is")
+    elif preview_only:
+        print("Path transformation preview mode - no changes will be made")
+    else:
+        print("Path transformation enabled - system-specific paths will be adapted")
     
     # Restore the state without executing installation
     success = app.restore_from_backup(args.backup_file, execute_plan=False)
@@ -244,7 +271,11 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     # Execute config restoration if requested
     if execute_plan or (hasattr(args, 'configs_only') and args.configs_only):
         print("Restoring configuration files from backup...")
-        app.execute_config_restoration(args.backup_file)
+        app.execute_config_restoration(
+            args.backup_file,
+            transform_paths=transform_paths,
+            preview_only=preview_only
+        )
     
     return 0
 
