@@ -162,6 +162,14 @@ def setup_argparse() -> argparse.ArgumentParser:
                                                       help='Set the backup directory')
     set_backup_dir_parser.add_argument('backup_dir', help='Path to the backup directory')
     
+    # Locate backups command
+    locate_parser = subparsers.add_parser('locate-backup', 
+                                        help='Scan common locations for Migrator backups')
+    locate_parser.add_argument('--include-network', action='store_true',
+                             help='Include network shares in the search (may be slow)')
+    locate_parser.add_argument('--output', '-o', 
+                             help='Output file for found backup paths')
+    
     return parser
 
 def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
@@ -242,6 +250,36 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
 
 def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     """Handle restore command"""
+    # Check if this appears to be a first run on a new system
+    if app.is_first_run() and not hasattr(args, 'dry_run'):
+        print("It appears this is the first time running Migrator on this system.")
+        
+        # Check if the specified backup file exists
+        if not os.path.exists(args.backup_file):
+            print(f"The specified backup file does not exist: {args.backup_file}")
+            print("\nWould you like to:")
+            print("1. Scan for backup files on connected drives")
+            print("2. Specify a different backup file path")
+            print("3. Cancel restore operation")
+            
+            choice = input("Enter your choice (1-3): ")
+            
+            if choice == '1':
+                # Create locate_args and call handle_locate_backup
+                locate_args = argparse.Namespace()
+                locate_args.include_network = False
+                return handle_locate_backup(app, locate_args)
+            elif choice == '2':
+                new_path = input("Enter the full path to your backup file: ")
+                if os.path.exists(new_path):
+                    args.backup_file = new_path
+                else:
+                    print(f"File not found: {new_path}")
+                    return 1
+            else:
+                print("Restore operation cancelled.")
+                return 0
+    
     print(f"Restoring system state from {args.backup_file}...")
     
     # Check for dry run mode
@@ -587,6 +625,88 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
         print(f"Unknown configuration subcommand: {args.subcommand}")
         return 1
 
+def handle_locate_backup(app: Migrator, args: argparse.Namespace) -> int:
+    """Handle locate-backup command"""
+    print("Scanning for Migrator backups in common locations...")
+    
+    search_network = args.include_network if hasattr(args, 'include_network') else False
+    
+    if search_network:
+        print("Including network shares in search (this may take a while)...")
+    
+    backup_files = app.scan_for_backups(search_removable=True, search_network=search_network)
+    
+    if not backup_files:
+        print("No backup files found.")
+        print("\nTips for locating your backup:")
+        print("1. Make sure your external drive is properly mounted")
+        print("2. If your backup is in a custom location, you can specify the full path:")
+        print("   migrator restore /path/to/your/backup.json")
+        print("3. You can also set a custom backup directory:")
+        print("   migrator config set-backup-dir /path/to/backup/dir")
+        return 1
+    
+    print(f"\nFound {len(backup_files)} Migrator backup file{'s' if len(backup_files) > 1 else ''}:")
+    
+    for i, backup_path in enumerate(backup_files, 1):
+        # Try to get the backup date from the filename
+        try:
+            filename = os.path.basename(backup_path)
+            date_part = filename.split('_backup_')[1].split('.json')[0]
+            date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]} {date_part[9:11]}:{date_part[11:13]}:{date_part[13:15]}"
+            print(f"{i}. {backup_path} (created: {date_str})")
+        except:
+            # If parsing fails, just show the path
+            print(f"{i}. {backup_path}")
+    
+    # Save to file if specified
+    if hasattr(args, 'output') and args.output:
+        try:
+            with open(args.output, 'w') as f:
+                for path in backup_files:
+                    f.write(f"{path}\n")
+            print(f"\nBackup paths saved to {args.output}")
+        except Exception as e:
+            print(f"\nError saving backup paths to file: {e}")
+    
+    print("\nTo restore from a backup, use:")
+    print(f"migrator restore PATH_TO_BACKUP")
+    
+    # Ask if they want to restore from one of the found backups
+    choice = input("\nWould you like to restore from one of these backups? (y/n): ")
+    if choice.lower() == 'y':
+        while True:
+            backup_num = input(f"Enter backup number (1-{len(backup_files)}): ")
+            try:
+                idx = int(backup_num) - 1
+                if 0 <= idx < len(backup_files):
+                    selected_backup = backup_files[idx]
+                    print(f"\nRestoring from: {selected_backup}")
+                    
+                    # First do a dry run
+                    restore_args = argparse.Namespace()
+                    restore_args.backup_file = selected_backup
+                    restore_args.dry_run = True
+                    handle_restore(app, restore_args)
+                    
+                    # Ask for confirmation to execute the restore
+                    execute = input("\nDo you want to execute this restore? (yes/no): ").lower().strip()
+                    if execute == 'yes':
+                        exec_args = argparse.Namespace()
+                        exec_args.backup_file = selected_backup
+                        exec_args.execute = True
+                        exec_args.dry_run = False
+                        return handle_restore(app, exec_args)
+                    else:
+                        print("Restore cancelled.")
+                        return 0
+                else:
+                    print(f"Please enter a number between 1 and {len(backup_files)}")
+            except ValueError:
+                print("Please enter a valid number")
+    
+    return 0
+
 def main() -> int:
     """Main CLI entry point"""
     parser = setup_argparse()
@@ -610,7 +730,8 @@ def main() -> int:
         'service': handle_service,
         'install-service': handle_install_service,
         'remove-service': handle_remove_service,
-        'config': handle_config
+        'config': handle_config,
+        'locate-backup': handle_locate_backup
     }
     
     handler = command_handlers.get(args.command)

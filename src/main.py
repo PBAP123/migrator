@@ -1094,3 +1094,105 @@ class Migrator:
             Path to the configured backup directory
         """
         return config.get_backup_dir()
+
+    def is_first_run(self) -> bool:
+        """Determine if this appears to be a first run on a new system
+        
+        Returns:
+            True if this appears to be a first-time run with no state file or config
+        """
+        # Check if the state file exists
+        if not os.path.exists(self.state_file):
+            return True
+        
+        # Check if config directory exists
+        config_dir = os.path.expanduser("~/.config/migrator")
+        if not os.path.exists(config_dir):
+            return True
+        
+        # Check if backup directory configuration exists
+        config_file = os.path.join(config_dir, "config.json")
+        if not os.path.exists(config_file):
+            return True
+        
+        return False
+
+    def scan_for_backups(self, search_removable: bool = True, search_network: bool = False) -> List[str]:
+        """Scan common locations for Migrator backup files
+        
+        This is particularly useful for finding backups on external media
+        when restoring to a fresh system.
+        
+        Args:
+            search_removable: Whether to search removable media (USB drives, etc.)
+            search_network: Whether to search network mounts (can be slow)
+            
+        Returns:
+            List of found backup file paths
+        """
+        backup_files = []
+        
+        # First check home directory
+        home_backups_dir = os.path.expanduser("~/migrator_backups")
+        if os.path.exists(home_backups_dir):
+            for f in os.listdir(home_backups_dir):
+                if f.startswith('migrator_backup_') and f.endswith('.json'):
+                    backup_files.append(os.path.join(home_backups_dir, f))
+
+        # Check external drives and mounted media
+        if search_removable:
+            # Common mount points for removable media
+            mount_points = [
+                "/media",   # Ubuntu/Debian style
+                "/run/media",  # Fedora/Arch style
+                "/mnt"      # General mount point
+            ]
+            
+            for mount_base in mount_points:
+                if os.path.exists(mount_base):
+                    # Look through user-specific mounts first (common in Ubuntu/Debian)
+                    if os.path.exists(os.path.join(mount_base, self.system_variables.username)):
+                        user_media = os.path.join(mount_base, self.system_variables.username)
+                        for drive in os.listdir(user_media):
+                            drive_path = os.path.join(user_media, drive)
+                            if os.path.isdir(drive_path):
+                                # Check for migrator_backups directory
+                                backup_dir = os.path.join(drive_path, "migrator_backups")
+                                if os.path.exists(backup_dir):
+                                    for f in os.listdir(backup_dir):
+                                        if f.startswith('migrator_backup_') and f.endswith('.json'):
+                                            backup_files.append(os.path.join(backup_dir, f))
+                
+                    # Also check direct mounts (common in Fedora/Arch)
+                    for drive in os.listdir(mount_base):
+                        drive_path = os.path.join(mount_base, drive)
+                        if os.path.isdir(drive_path):
+                            # Skip user directory we already checked
+                            if drive == self.system_variables.username:
+                                continue
+                            
+                            # Check for migrator_backups directory
+                            backup_dir = os.path.join(drive_path, "migrator_backups")
+                            if os.path.exists(backup_dir):
+                                for f in os.listdir(backup_dir):
+                                    if f.startswith('migrator_backup_') and f.endswith('.json'):
+                                        backup_files.append(os.path.join(backup_dir, f))
+        
+        # Check network shares if requested (could be slow)
+        if search_network:
+            network_mounts = ["/net", "/Network"]
+            for network_base in network_mounts:
+                if os.path.exists(network_base):
+                    for share in os.listdir(network_base):
+                        share_path = os.path.join(network_base, share)
+                        if os.path.isdir(share_path):
+                            # Check for migrator_backups directory
+                            backup_dir = os.path.join(share_path, "migrator_backups")
+                            if os.path.exists(backup_dir):
+                                for f in os.listdir(backup_dir):
+                                    if f.startswith('migrator_backup_') and f.endswith('.json'):
+                                        backup_files.append(os.path.join(backup_dir, f))
+        
+        # Sort by modification time (newest first)
+        backup_files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+        return backup_files

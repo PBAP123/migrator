@@ -351,6 +351,38 @@ This generates a detailed report showing:
 
 After reviewing the report, you'll be prompted to confirm if you want to proceed with the actual restore operation. This gives you a clear understanding of the impact before committing to any changes.
 
+### First-Run Restore on New Systems
+
+When restoring to a completely fresh system, Migrator provides specialized handling to help you locate your backup files:
+
+```bash
+# Automatically locate backups on connected drives
+migrator locate-backup
+
+# Include network shares in the search
+migrator locate-backup --include-network
+
+# Save the list of found backups to a file
+migrator locate-backup --output backup_list.txt
+```
+
+The `locate-backup` command will:
+1. Scan common locations for Migrator backup files, including:
+   - Your home directory
+   - External USB drives
+   - Removable media
+   - Network shares (if specified)
+2. Display a list of found backups with their creation dates
+3. Allow you to select and restore directly from the list
+
+When you run a restore operation on a fresh system and the backup file isn't found, Migrator will automatically:
+1. Detect that this is a first-run scenario
+2. Offer to scan for backup files on connected drives
+3. Allow you to specify a different backup file path
+4. Guide you through the restore process
+
+This eliminates friction when migrating to a new system, as Migrator will intelligently look for your backups on external media and network locations.
+
 ### Desktop Environment Configuration Backup
 
 Migrator intelligently handles desktop environment and window manager configurations:
