@@ -99,11 +99,45 @@ migrator check
 migrator service
 ```
 
-### As a Service
+### Setting Up as a System Service
 
-You can set up Migrator to run as a service to periodically check for changes.
+Migrator provides a simple way to install itself as a systemd service that will automatically run checks on a regular schedule.
 
-#### Using systemd with Virtual Environment
+#### Automatic Installation (Recommended)
+
+```bash
+# Install as a system-wide service (requires sudo)
+migrator install-service
+
+# Or install as a user service (no sudo required)
+migrator install-service --user
+
+# Customize the check interval (e.g., every 12 hours)
+migrator install-service --interval 43200
+```
+
+The installer will:
+1. Automatically detect your username and virtual environment
+2. Create the appropriate systemd service file
+3. Enable and start the service (with your permission)
+
+#### Manual Removal
+
+To remove the service:
+
+```bash
+# Remove a system-wide service
+migrator remove-service
+
+# Remove a user service
+migrator remove-service --user
+```
+
+#### Legacy: Manual Service Setup
+
+If you prefer to set up the service manually, you can create a systemd service file:
+
+##### Using systemd with Virtual Environment
 
 Create a file at `/etc/systemd/system/migrator.service`:
 
@@ -130,7 +164,7 @@ sudo systemctl enable migrator.service
 sudo systemctl start migrator.service
 ```
 
-#### Using cron with Virtual Environment
+##### Using cron with Virtual Environment
 
 Set up a daily cron job:
 

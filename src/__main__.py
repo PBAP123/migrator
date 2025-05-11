@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 from main import Migrator
+from utils.service import create_systemd_service, remove_systemd_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ def setup_argparse() -> argparse.ArgumentParser:
               migrator restore backup.json # Restore from backup
               migrator compare backup.json # Compare current system with backup
               migrator plan backup.json   # Generate installation plan from backup
+              migrator install-service    # Install as a systemd service
         """)
     )
     
@@ -62,6 +64,20 @@ def setup_argparse() -> argparse.ArgumentParser:
     service_parser = subparsers.add_parser('service', help='Run as a service for periodic checking')
     service_parser.add_argument('--interval', '-i', type=int, default=86400,
                                 help='Interval between checks in seconds (default: 86400 - once per day)')
+    
+    # Install service command
+    install_service_parser = subparsers.add_parser('install-service', 
+                                                 help='Install Migrator as a systemd service')
+    install_service_parser.add_argument('--interval', '-i', type=int, default=86400,
+                                      help='Interval between checks in seconds (default: 86400 - once per day)')
+    install_service_parser.add_argument('--user', action='store_true',
+                                      help='Install as a user service instead of system-wide')
+    
+    # Remove service command
+    remove_service_parser = subparsers.add_parser('remove-service', 
+                                                help='Remove Migrator systemd service')
+    remove_service_parser.add_argument('--user', action='store_true',
+                                     help='Remove user service instead of system-wide')
     
     return parser
 
@@ -226,6 +242,37 @@ def handle_service(app: Migrator, args: argparse.Namespace) -> int:
     
     return 0
 
+def handle_install_service(app: Migrator, args: argparse.Namespace) -> int:
+    """Handle install-service command"""
+    print("Installing Migrator as a systemd service...")
+    
+    success, message = create_systemd_service(
+        check_interval=args.interval,
+        user_unit=args.user
+    )
+    
+    if success:
+        print(message)
+        return 0
+    else:
+        print(f"Error: {message}")
+        return 1
+
+def handle_remove_service(app: Migrator, args: argparse.Namespace) -> int:
+    """Handle remove-service command"""
+    print("Removing Migrator systemd service...")
+    
+    success, message = remove_systemd_service(
+        user_unit=args.user
+    )
+    
+    if success:
+        print(message)
+        return 0
+    else:
+        print(f"Error: {message}")
+        return 1
+
 def main() -> int:
     """Main CLI entry point"""
     parser = setup_argparse()
@@ -246,7 +293,9 @@ def main() -> int:
         'compare': handle_compare,
         'plan': handle_plan,
         'check': handle_check,
-        'service': handle_service
+        'service': handle_service,
+        'install-service': handle_install_service,
+        'remove-service': handle_remove_service
     }
     
     handler = command_handlers.get(args.command)
