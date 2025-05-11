@@ -177,17 +177,62 @@ class SnapPackageManager(PackageManager):
         except subprocess.SubprocessError:
             return None
     
+    def is_version_available(self, package_name: str, version: str) -> bool:
+        """Check if a specific version of a snap package is available
+        
+        For snaps, we check if the revision or channel is available
+        """
+        if not self.available:
+            return False
+        
+        try:
+            cmd = ['snap', 'info', package_name]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            
+            # Snap doesn't directly expose available versions in the same way as apt
+            # We'll check if this looks like a revision number or a channel name
+            if version.isdigit():
+                # This looks like a revision number, check for it
+                revision_pattern = f"rev {version}"
+                return revision_pattern in result.stdout
+            else:
+                # Treat as a channel name
+                channel_pattern = f"{version}:"
+                for line in result.stdout.splitlines():
+                    if line.strip().startswith(channel_pattern):
+                        return True
+            
+            return False
+            
+        except subprocess.SubprocessError:
+            return False
+    
     def install_package(self, package_name: str, version: Optional[str] = None) -> bool:
-        """Install a snap package"""
+        """Install a snap package
+        
+        Args:
+            package_name: The name of the package to install
+            version: The version to install, which can be:
+                     - A channel name (e.g., "stable", "edge")
+                     - A revision number (e.g., "12345")
+                     
+        Note: For snaps, we always use the latest version in a given channel
+        unless a specific revision is requested.
+        """
         if not self.available:
             logger.error("Snap package manager not available")
             return False
         
         try:
             cmd = ['snap', 'install', package_name]
+            
             if version:
-                # For snaps, we generally specify a channel rather than version
-                cmd.append(f"--channel={version}")
+                # Check if this looks like a revision number
+                if version.isdigit():
+                    cmd.extend(['--revision', version])
+                else:
+                    # Treat as a channel name
+                    cmd.extend(['--channel', version])
             
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
             return result.returncode == 0

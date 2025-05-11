@@ -11,6 +11,8 @@ from .apt import AptPackageManager
 from .snap import SnapPackageManager
 from .flatpak import FlatpakPackageManager
 from .appimage import AppImageManager
+from .dnf import DnfPackageManager
+from .pacman import PacmanPackageManager
 
 # Import other package managers as they are implemented
 # from .dnf import DnfPackageManager
@@ -33,6 +35,8 @@ class PackageManagerFactory:
             SnapPackageManager,
             FlatpakPackageManager,
             AppImageManager,
+            DnfPackageManager,
+            PacmanPackageManager,
             # Add others as they are implemented
             # DnfPackageManager,
             # PacmanPackageManager,

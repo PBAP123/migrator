@@ -167,6 +167,17 @@ class AppImageManager(PackageManager):
         """
         return self.get_installed_version(package_name)
     
+    def is_version_available(self, package_name: str, version: str) -> bool:
+        """Check if a specific version of an AppImage is available
+        
+        Note: For AppImages, we can only check if the exact version is installed.
+        We can't check for availability of other versions without knowing the source.
+        """
+        package = self.get_package_info(package_name)
+        if package and package.version == version:
+            return True
+        return False
+    
     def install_package(self, package_name: str, version: Optional[str] = None) -> bool:
         """Install an AppImage
         

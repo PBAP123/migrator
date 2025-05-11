@@ -168,17 +168,71 @@ class FlatpakPackageManager(PackageManager):
             return None
         
         try:
-            # Unfortunately, flatpak doesn't provide a direct way to get the latest version
-            # without updating. We'd need to use something like 'flatpak remote-info'
-            # but that requires knowing which remote the app is from.
-            # For now, we just return the installed version if available.
+            # Try to get the latest remote version using remote-info
+            # First, find what remote the app is in
+            remotes = []
+            search_cmd = ['flatpak', 'search', '--columns=application,origin', package_name]
+            search_result = subprocess.run(
+                search_cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                text=True, 
+                check=False
+            )
+            
+            if search_result.returncode == 0:
+                # Parse output to find the remote
+                for line in search_result.stdout.splitlines():
+                    parts = line.strip().split()
+                    if len(parts) >= 2 and parts[0] == package_name:
+                        remotes.append(parts[1])
+            
+            # Try each remote to find version info
+            for remote in remotes:
+                info_cmd = ['flatpak', 'remote-info', remote, package_name]
+                info_result = subprocess.run(
+                    info_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False
+                )
+                
+                if info_result.returncode == 0:
+                    # Parse the output for Version
+                    for line in info_result.stdout.splitlines():
+                        if line.strip().startswith("Version:"):
+                            return line.split("Version:", 1)[1].strip()
+            
+            # Fall back to the installed version if we couldn't find remote info
             return self.get_installed_version(package_name)
             
-        except subprocess.SubprocessError:
+        except subprocess.SubprocessError as e:
+            logger.error(f"Error getting latest Flatpak version for {package_name}: {e}")
             return None
     
+    def is_version_available(self, package_name: str, version: str) -> bool:
+        """Check if a specific version of a flatpak package is available
+        
+        Note: Flatpak doesn't provide an easy way to check specific versions availability.
+        We can only approximate this for installed packages, which doesn't really help
+        for restore purposes.
+        
+        Flatpak packages should generally be installed at the latest version.
+        """
+        # For Flatpak, we'll just assume specific versions aren't available
+        # and always use the latest version instead
+        return False
+    
     def install_package(self, package_name: str, version: Optional[str] = None) -> bool:
-        """Install a flatpak package"""
+        """Install a flatpak package
+        
+        Args:
+            package_name: The name of the package to install
+            version: Ignored for Flatpak - we always install the latest version
+                    
+        Note: For Flatpak, we always install the latest version available in the remote.
+        """
         if not self.available:
             logger.error("Flatpak package manager not available")
             return False
@@ -186,7 +240,7 @@ class FlatpakPackageManager(PackageManager):
         try:
             cmd = ['flatpak', 'install', '-y']
             
-            # If package contains a slash, it likely includes the remote
+            # Determine if we need to specify a remote
             if '/' not in package_name:
                 # Try to find a remote that has this package
                 search_cmd = ['flatpak', 'search', '--columns=application,origin', package_name]
@@ -209,8 +263,8 @@ class FlatpakPackageManager(PackageManager):
             
             cmd.append(package_name)
             
-            # Flatpak doesn't directly support version specification in the command line
-            # If version is needed, we'd have to use branch/commit
+            # For Flatpak, we always install the latest version
+            # Ignore any specific version parameter
             
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
             return result.returncode == 0

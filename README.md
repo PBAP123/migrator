@@ -29,7 +29,7 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
 
 - **Multi-Distribution Support**: Works on any Linux distribution by automatically detecting package managers.
 - **Package Tracking**: Tracks packages from various sources:
-  - Distribution-specific packages (apt, yum, pacman, etc.)
+  - Distribution-specific packages (apt, dnf, pacman, etc.)
   - Snap packages
   - Flatpak packages
   - AppImages
@@ -418,3 +418,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 Developed by Ali Price (ali.price@pantheritservices.co.uk).
 GitHub: https://github.com/PBAP123/migrator
+
+# Package Manager Version Support
+Different package managers handle versions in different ways:
+- **apt**: Full version control with specific version installation
+- **dnf/yum**: Version specification using package-version syntax
+- **pacman**: Limited to latest available version in repositories
+- **snap**: Control via revision numbers or channels
+- **flatpak**: Always installs latest version available
