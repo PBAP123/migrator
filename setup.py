@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 import os
 import shutil
 from pathlib import Path
@@ -64,11 +64,11 @@ setup(
     author="Ali Price",
     author_email="ali.price@pantheritservices.co.uk",
     url="https://github.com/PBAP123/migrator",
-    packages=find_packages(where="src"),
     package_dir={"": "src"},
+    packages=find_namespace_packages(where="src"),
     entry_points={
         "console_scripts": [
-            "migrator=migrator.__main__:main",
+            "migrator=__main__:main",
         ],
     },
     install_requires=[
