@@ -44,6 +44,11 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
 - **Custom Backup Destinations**: Choose where your backups are stored:
   - Define any local folder or network share as your backup location
   - Configuration persists between sessions
+- **Multi-System Backup Organization**: Organize backups from multiple computers:
+  - Automatically creates subdirectories based on hostname for each system
+  - Prevents file conflicts when backing up multiple machines to the same location
+  - Provides commands for easily listing and managing backups by host
+  - Compatible with existing backup files created before this feature
 - **Dynamic Path Handling**: Intelligent system-specific path handling:
   - Automatically detects usernames and home directory paths during backup
   - Adapts paths to match the target system during restoration
@@ -295,6 +300,11 @@ If you encounter any of these issues:
 - **Custom Backup Destinations**: Choose where your backups are stored:
   - Define any local folder or network share as your backup location
   - Configuration persists between sessions
+- **Multi-System Backup Organization**: Organize backups from multiple computers:
+  - Automatically creates subdirectories based on hostname for each system
+  - Prevents file conflicts when backing up multiple machines to the same location
+  - Provides commands for easily listing and managing backups by host
+  - Compatible with existing backup files created before this feature
 - **Dynamic Path Handling**: Intelligent system-specific path handling:
   - Automatically detects usernames and home directory paths during backup
   - Adapts paths to match the target system during restoration
@@ -775,3 +785,42 @@ migrator setup
 The wizard will be automatically triggered on the first run of Migrator, but you can run it any time to reconfigure your settings.
 
 Setup options are saved to Migrator's configuration file (`~/.config/migrator/config.json`), and if you enable scheduled backups, a systemd service will be created for you automatically.
+
+### Multi-System Backup Organization
+
+When managing backups across multiple systems:
+
+```bash
+# List all hosts that have backups
+migrator config list-hosts
+
+# Show backups for a specific host
+migrator config get-host-backups hostname
+migrator config get-host-backups hostname --show-detail
+
+# List all backups with host organization
+migrator list-backups --by-host
+
+# Show backups for a specific host only
+migrator list-backups --host hostname
+
+# Detailed backup listing
+migrator list-backups --show-detail
+```
+
+The multi-system backup structure organizes your backups into subdirectories based on hostname:
+
+```
+backup_directory/
+├── hostname1/
+│   ├── migrator_backup_20230101_120000_hostname1.json
+│   └── config_files/
+│       └── ... 
+├── hostname2/
+│   ├── migrator_backup_20230201_143000_hostname2.json
+│   └── config_files/
+│       └── ...
+└── ... (other hosts)
+```
+
+This organization prevents file conflicts and makes it easy to find backups for a specific system.

@@ -190,6 +190,17 @@ def setup_argparse() -> argparse.ArgumentParser:
                                                       help='Set the backup directory')
     set_backup_dir_parser.add_argument('backup_dir', help='Path to the backup directory')
     
+    # List hosts command
+    list_hosts_parser = config_subparsers.add_parser('list-hosts',
+                                                  help='List all hosts that have backups')
+    
+    # Get host backups command
+    get_host_backups_parser = config_subparsers.add_parser('get-host-backups',
+                                                        help='List backups for a specific host')
+    get_host_backups_parser.add_argument('hostname', help='Hostname to get backups for')
+    get_host_backups_parser.add_argument('--show-detail', '-d', action='store_true',
+                                      help='Show detailed metadata for each backup')
+    
     # List backups command
     list_backups_parser = subparsers.add_parser('list-backups', 
                                               help='List available backups with metadata')
@@ -197,6 +208,10 @@ def setup_argparse() -> argparse.ArgumentParser:
                                    help='Directory to search for backups (defaults to configured backup directory)')
     list_backups_parser.add_argument('--show-detail', '-d', action='store_true',
                                    help='Show detailed metadata for each backup')
+    list_backups_parser.add_argument('--by-host', '-b', action='store_true',
+                                   help='Group backups by hostname')
+    list_backups_parser.add_argument('--host', 
+                                   help='Show backups only for the specified hostname')
     
     # Locate backups command
     locate_parser = subparsers.add_parser('locate-backup', 
@@ -763,6 +778,64 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
             print(f"Failed to set backup directory to: {backup_dir}")
             return 1
             
+    elif args.subcommand == 'list-hosts':
+        hosts = app.list_backup_hosts()
+        
+        if not hosts:
+            print("No backup hosts found.")
+            return 0
+            
+        print(f"Found {len(hosts)} hosts with backups:")
+        for i, host in enumerate(hosts, 1):
+            print(f"{i}. {host}")
+            
+        return 0
+        
+    elif args.subcommand == 'get-host-backups':
+        if not hasattr(args, 'hostname') or not args.hostname:
+            print("Error: No hostname specified")
+            return 1
+            
+        hostname = args.hostname
+        backups = app.get_host_specific_backups(hostname)
+        
+        if not backups:
+            print(f"No backups found for host: {hostname}")
+            return 0
+            
+        print(f"Found {len(backups)} backup{'s' if len(backups) > 1 else ''} for host {hostname}:")
+        
+        # Sort by modification time (newest first)
+        backups.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+        
+        show_detail = args.show_detail if hasattr(args, 'show_detail') else False
+        
+        for i, backup_file in enumerate(backups, 1):
+            # Get basic file info
+            mod_time = datetime.fromtimestamp(os.path.getmtime(backup_file))
+            size = os.path.getsize(backup_file)
+            size_str = f"{size/1024/1024:.1f}MB" if size > 1024*1024 else f"{size/1024:.1f}KB"
+            
+            if show_detail:
+                # Get detailed metadata
+                metadata = app.get_backup_metadata(backup_file)
+                
+                distro = f"{metadata.get('distro_name', 'Unknown')} {metadata.get('distro_version', '')}"
+                packages = metadata.get('package_count', 0)
+                configs = metadata.get('config_count', 0)
+                
+                print(f"{i}. {os.path.basename(backup_file)}")
+                print(f"   Created: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"   Size: {size_str}")
+                print(f"   System: {distro.strip()}")
+                print(f"   Contents: {packages} packages, {configs} config files")
+                print("")
+            else:
+                # Simple listing
+                print(f"{i}. {os.path.basename(backup_file)} - {mod_time.strftime('%Y-%m-%d %H:%M:%S')} ({size_str})")
+        
+        return 0
+            
     else:
         print(f"Unknown configuration subcommand: {args.subcommand}")
         return 1
@@ -928,12 +1001,59 @@ def handle_list_backups(app: Migrator, args: argparse.Namespace) -> int:
         print(f"Error: Backup directory {backup_dir} does not exist")
         return 1
     
-    # Find all backup files
-    backup_files = [
-        os.path.join(backup_dir, f) 
-        for f in os.listdir(backup_dir) 
-        if f.startswith('migrator_backup_') and f.endswith('.json')
-    ]
+    # Check if we should filter by host
+    selected_host = args.host if hasattr(args, 'host') and args.host else None
+    
+    # Check if we should organize by host
+    by_host = args.by_host if hasattr(args, 'by_host') else False
+    
+    # If filtering by host, use the host-specific function
+    if selected_host:
+        backups = app.get_host_specific_backups(selected_host)
+        if not backups:
+            print(f"No backups found for host: {selected_host}")
+            return 0
+        
+        print(f"\nFound {len(backups)} backup{'s' if len(backups) > 1 else ''} for host {selected_host}:")
+        print("-" * 80)
+        
+        # Sort by modification time (newest first)
+        backups.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+        
+        # Show details for each backup
+        show_detail = args.show_detail if hasattr(args, 'show_detail') else False
+        _display_backups(app, backups, show_detail)
+        
+        return 0
+    
+    # If organizing by host
+    elif by_host:
+        hosts = app.list_backup_hosts()
+        
+        if not hosts:
+            print("No backup hosts found.")
+            return 0
+        
+        print(f"\nFound {len(hosts)} hosts with backups:")
+        print("-" * 80)
+        
+        for host in hosts:
+            backups = app.get_host_specific_backups(host)
+            
+            # Sort by modification time (newest first)
+            backups.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+            
+            print(f"\nHost: {host} ({len(backups)} backups)")
+            print("-" * 40)
+            
+            # Show details for each backup
+            show_detail = args.show_detail if hasattr(args, 'show_detail') else False
+            _display_backups(app, backups, show_detail)
+        
+        return 0
+    
+    # Find all backup files using the scan_for_backups method (which recursively looks for backups)
+    backup_files = app.scan_for_backups(search_removable=False, search_network=False)
     
     if not backup_files:
         print("No backup files found.")
@@ -945,65 +1065,61 @@ def handle_list_backups(app: Migrator, args: argparse.Namespace) -> int:
     print(f"\nFound {len(backup_files)} backup{'s' if len(backup_files) > 1 else ''}:")
     print("-" * 80)
     
-    for i, backup_path in enumerate(backup_files, 1):
-        try:
-            # Get backup metadata
-            metadata = app.get_backup_metadata(backup_path)
-            
-            # Format size
-            file_size = metadata.get("file_size", 0) / (1024 * 1024)  # Convert to MB
-            
-            # Print basic info
-            print(f"{i}. {os.path.basename(backup_path)}")
-            
-            # Format and display timestamp
-            if "timestamp" in metadata:
-                timestamp = metadata["timestamp"]
-                # Check if timestamp contains date and time parts
-                if len(timestamp) >= 15:  # Old format with full YYYYMMDD_HHMMSS
-                    timestamp_display = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[9:11]}:{timestamp[11:13]}"
-                else:  # New format with separate date part
-                    # Try to find the time part in the filename
-                    filename = metadata.get("filename", "")
-                    parts = filename.replace(".json", "").split("_backup_")[1].split("_")
-                    if len(parts) >= 2:
-                        timestamp_display = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {parts[1][:2]}:{parts[1][2:4]}"
-                    else:
-                        timestamp_display = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}"
-                
-                print(f"   Created: {timestamp_display}")
-            
-            # Show source information
-            hostname = metadata.get("hostname", "unknown")
-            distro_name = metadata.get("distro_name", "")
-            distro_version = metadata.get("distro_version", "")
-            print(f"   Source: {hostname}, {distro_name} {distro_version}")
-            print(f"   Size: {file_size:.2f} MB")
-            
-            # Show detailed info if requested
-            if hasattr(args, 'show_detail') and args.show_detail:
-                # Count packages and config files
-                package_count = metadata.get("package_count", 0)
-                config_count = metadata.get("config_count", 0)
-                
-                # Get a list of package managers
-                package_sources = metadata.get("package_sources", [])
-                
-                print(f"   Packages: {package_count} ({', '.join(package_sources) if package_sources else 'none'})")
-                print(f"   Config files: {config_count}")
-                
-                # Display username if available
-                username = metadata.get("username", "")
-                if username:
-                    print(f"   Username: {username}")
-            
-            print("-" * 80)
-            
-        except Exception as e:
-            print(f"{i}. {os.path.basename(backup_path)} (Error reading metadata: {e})")
-            print("-" * 80)
+    # Show details for each backup
+    show_detail = args.show_detail if hasattr(args, 'show_detail') else False
+    _display_backups(app, backup_files, show_detail)
     
     return 0
+
+def _display_backups(app: Migrator, backup_files: List[str], show_detail: bool = False) -> None:
+    """Helper function to display backup files
+    
+    Args:
+        app: Migrator instance
+        backup_files: List of backup files to display
+        show_detail: Whether to show detailed metadata
+    """
+    for i, backup_file in enumerate(backup_files, 1):
+        # Get basic file info
+        mod_time = datetime.fromtimestamp(os.path.getmtime(backup_file))
+        size = os.path.getsize(backup_file)
+        size_str = f"{size/1024/1024:.1f}MB" if size > 1024*1024 else f"{size/1024:.1f}KB"
+        
+        # Get file path info
+        filename = os.path.basename(backup_file)
+        dir_name = os.path.basename(os.path.dirname(backup_file))
+        parent_dir = os.path.basename(os.path.dirname(os.path.dirname(backup_file)))
+        
+        # Determine if this is in a host-specific directory
+        is_in_host_dir = False
+        host_name = None
+        if dir_name != parent_dir and dir_name != "backups" and dir_name != "migrator_backups":
+            is_in_host_dir = True
+            host_name = dir_name
+        
+        if show_detail:
+            # Get detailed metadata
+            metadata = app.get_backup_metadata(backup_file)
+            
+            # Extract relevant information
+            distro = f"{metadata.get('distro_name', 'Unknown')} {metadata.get('distro_version', '')}"
+            hostname = metadata.get('hostname', host_name or 'Unknown')
+            packages = metadata.get('package_count', 0)
+            configs = metadata.get('config_count', 0)
+            
+            print(f"{i}. {filename}")
+            print(f"   Created: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   Size: {size_str}")
+            print(f"   Host: {hostname}")
+            if is_in_host_dir:
+                print(f"   Directory: {dir_name}/")
+            print(f"   System: {distro.strip()}")
+            print(f"   Contents: {packages} packages, {configs} config files")
+            print("")
+        else:
+            # Simple listing with host information when available
+            host_info = f"[{host_name}] " if is_in_host_dir else ""
+            print(f"{i}. {host_info}{filename} - {mod_time.strftime('%Y-%m-%d %H:%M:%S')} ({size_str})")
 
 def main() -> int:
     """Main entry point for the application"""

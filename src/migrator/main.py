@@ -297,6 +297,9 @@ class Migrator:
         
         Args:
             backup_dir: Path to the backup directory, or None to use the configured directory
+        
+        Returns:
+            Path to the created backup file, or empty string if failed
         """
         # Create a multi-progress tracker for the backup operation
         multi_progress = MultiProgressTracker(overall_desc="System backup", overall_total=4)
@@ -309,14 +312,20 @@ class Migrator:
             
             os.makedirs(backup_dir, exist_ok=True)
             
+            # Get the hostname for organizing backups
+            hostname = self.system_variables.hostname
+            # Sanitize hostname for directory name (remove invalid characters)
+            safe_hostname = ''.join(c if c.isalnum() or c in '-_' else '_' for c in hostname)
+            
+            # Create a host-specific subdirectory for multi-system organization
+            host_backup_dir = os.path.join(backup_dir, safe_hostname)
+            os.makedirs(host_backup_dir, exist_ok=True)
+            
             # Create a timestamped backup file with hostname
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            hostname = self.system_variables.hostname
-            # Sanitize hostname for filename (remove invalid characters)
-            safe_hostname = ''.join(c if c.isalnum() or c in '-_' else '_' for c in hostname)
-            backup_file = os.path.join(backup_dir, f"migrator_backup_{timestamp}_{safe_hostname}.json")
+            backup_file = os.path.join(host_backup_dir, f"migrator_backup_{timestamp}_{safe_hostname}.json")
             
-            multi_progress.update_overall(1, f"Starting backup to {backup_dir}")
+            multi_progress.update_overall(1, f"Starting backup to {host_backup_dir}")
             
             try:
                 # Add system variables to the state for portability
@@ -329,7 +338,7 @@ class Migrator:
                     "distro_version": self.distro_info.version,
                     "distro_id": self.distro_info.id,
                     "timestamp": timestamp,
-                    "backup_version": "1.1"  # Version of the backup format
+                    "backup_version": "1.2"  # Updated version of the backup format
                 }
                 
                 # Write the state file
@@ -340,7 +349,7 @@ class Migrator:
                 multi_progress.update_overall(1, "System state saved")
                 
                 # Create a directory for config files
-                configs_dir = os.path.join(backup_dir, "config_files")
+                configs_dir = os.path.join(host_backup_dir, "config_files")
                 os.makedirs(configs_dir, exist_ok=True)
                 
                 # Create tracker for config file copying
@@ -1265,12 +1274,8 @@ class Migrator:
         if not os.path.exists(backup_dir):
             return None
             
-        # Find all backup files
-        backup_files = [
-            os.path.join(backup_dir, f) 
-            for f in os.listdir(backup_dir) 
-            if f.startswith('migrator_backup_') and f.endswith('.json')
-        ]
+        # Find all backup files using the scan_for_backups method
+        backup_files = self.scan_for_backups(search_removable=False, search_network=False)
         
         if not backup_files:
             return None
@@ -1347,9 +1352,17 @@ class Migrator:
         # First check the configured backup directory
         backup_dir = config.get_backup_dir()
         if os.path.exists(backup_dir):
+            # Check for backups directly in the backup directory (for backward compatibility)
             for f in os.listdir(backup_dir):
-                if f.startswith('migrator_backup_') and f.endswith('.json'):
-                    backup_files.append(os.path.join(backup_dir, f))
+                item_path = os.path.join(backup_dir, f)
+                if os.path.isfile(item_path) and f.startswith('migrator_backup_') and f.endswith('.json'):
+                    backup_files.append(item_path)
+                    
+            # Check for backups in host-specific subdirectories
+            for subdir in os.listdir(backup_dir):
+                subdir_path = os.path.join(backup_dir, subdir)
+                if os.path.isdir(subdir_path):
+                    self._scan_directory_for_backups(subdir_path, backup_files, max_depth=1)
         
         # Add more search paths as needed
         search_paths = [
@@ -1409,6 +1422,68 @@ class Migrator:
             # Skip directories we can't access
             pass
 
+    def get_host_specific_backups(self, hostname: Optional[str] = None) -> List[str]:
+        """Get backups for a specific host
+        
+        Args:
+            hostname: The hostname to get backups for, or None to use current hostname
+        
+        Returns:
+            List of paths to backup files for the specified host
+        """
+        if hostname is None:
+            hostname = self.system_variables.hostname
+        
+        # Sanitize hostname for directory name (remove invalid characters)
+        safe_hostname = ''.join(c if c.isalnum() or c in '-_' else '_' for c in hostname)
+        
+        all_backups = self.scan_for_backups(search_removable=False, search_network=False)
+        
+        # Filter backups by hostname
+        host_backups = []
+        for backup in all_backups:
+            # Check if the backup is in a host-specific directory or has the hostname in the filename
+            backup_dir = os.path.dirname(backup)
+            if os.path.basename(backup_dir) == safe_hostname or f"_{safe_hostname}.json" in os.path.basename(backup):
+                host_backups.append(backup)
+        
+        return host_backups
+
+    def list_backup_hosts(self) -> List[str]:
+        """List all hosts that have backups
+        
+        Returns:
+            List of hostnames that have backups
+        """
+        backup_dir = config.get_backup_dir()
+        if not os.path.exists(backup_dir):
+            return []
+        
+        hosts = []
+        
+        # Check for host-specific subdirectories
+        for item in os.listdir(backup_dir):
+            item_path = os.path.join(backup_dir, item)
+            if os.path.isdir(item_path):
+                # Check if the directory contains backup files
+                for f in os.listdir(item_path):
+                    if f.startswith('migrator_backup_') and f.endswith('.json'):
+                        hosts.append(item)
+                        break
+        
+        # For backward compatibility, check for backups directly in the backup directory
+        # and extract hostnames from filenames
+        for item in os.listdir(backup_dir):
+            if item.startswith('migrator_backup_') and item.endswith('.json'):
+                filename = item.replace(".json", "")
+                parts = filename.split("_")
+                if len(parts) >= 4:  # migrator_backup_timestamp_hostname
+                    hostname = "_".join(parts[3:])  # Join all parts after the timestamp
+                    if hostname not in hosts:
+                        hosts.append(hostname)
+        
+        return hosts
+
     def get_backup_metadata(self, backup_file: str) -> Dict[str, Any]:
         """Get metadata from a backup file
         
@@ -1422,16 +1497,16 @@ class Migrator:
             # Check if file exists
             if not os.path.exists(backup_file):
                 return {"error": "Backup file not found"}
-                
+            
             # Load backup file
             with open(backup_file, 'r') as f:
                 backup_data = json.load(f)
-                
+            
             # Get file info
             file_size = os.path.getsize(backup_file)
             file_date = datetime.datetime.fromtimestamp(os.path.getmtime(backup_file))
             filename = os.path.basename(backup_file)
-                
+            
             # Extract metadata
             metadata = {}
             
@@ -1443,6 +1518,11 @@ class Migrator:
             # New backup metadata format
             if "backup_metadata" in backup_data:
                 metadata.update(backup_data["backup_metadata"])
+                
+                # Add information about backup organization structure
+                host_dir = os.path.basename(os.path.dirname(backup_file))
+                if host_dir != os.path.basename(config.get_backup_dir()):
+                    metadata["host_directory"] = host_dir
             else:
                 # Extract from basic system info
                 if "system_info" in backup_data:
