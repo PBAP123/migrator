@@ -19,7 +19,7 @@ Migrator captures everything that makes your Linux system uniquely yours - from 
 
 - **Distribution-agnostic** - Works across all major Linux distributions
 - **Comprehensive tracking** - Monitors all package types (apt, snap, flatpak, AppImage)
-- **User-friendly** - Intuitive terminal UI makes migration simple
+- **User-friendly** - Intuitive command-line interface makes migration simple
 - **No cloud required** - Your data stays local and private
 - **Zero lock-in** - Open source and community-driven
 
@@ -44,7 +44,6 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
 - **Custom Backup Destinations**: Choose where your backups are stored:
   - Define any local folder or network share as your backup location
   - Configuration persists between sessions
-  - TUI interface for easy management
 - **Dynamic Path Handling**: Intelligent system-specific path handling:
   - Automatically detects usernames and home directory paths during backup
   - Adapts paths to match the target system during restoration
@@ -62,7 +61,6 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Get confirmation before proceeding with actual changes
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
-- **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
 - **Service Management**: Run as a background service with automatic checks.
   - Run as a system-wide or user service
   - Schedule service based on specific times of day
@@ -117,7 +115,6 @@ After installation, you have several ways to use Migrator depending on your situ
 | Install for the first time | `./migrator-init.sh` |
 | Update after git pull | `./migrator-init.sh update` |
 | Use Migrator day-to-day (Recommended) | `migrator` command or CLI menu |
-| Launch the graphical TUI (Experimental) | `migrator-tui` command |
 | Fix installation issues | `./migrator-init.sh` |
 | Get quick help | `./migrator-init.sh help` |
 
@@ -137,21 +134,7 @@ migrator restore backup.json     # Restore from a backup
 
 These commands work from any directory and provide the most reliable experience for daily use.
 
-### Using the Terminal User Interface (TUI) - Experimental
-
-The TUI provides a more graphical interface in your terminal but may have compatibility issues:
-
-```bash
-# Launch via wrapper script (from anywhere)
-migrator-tui
-
-# Launch via the unified script (from repository directory)
-./migrator-init.sh tui
-```
-
-**Note on TUI Compatibility**: The TUI is experimental and requires the py_cui library, which may have compatibility issues on many systems. During installation, you'll be asked if you want to install TUI support. If the TUI fails to launch, Migrator will automatically fall back to the CLI menu, which provides all the same functionality in a more reliable format.
-
-### Using the CLI Fallback Menu
+### Using the CLI Menu
 
 The command-line interface (CLI) menu provides access to all Migrator functions in a simple text-based format:
 
@@ -167,7 +150,7 @@ Available commands:
 q) quit           - Exit the menu
 ```
 
-This menu appears automatically if the TUI fails to launch, or you can access it directly:
+You can access it directly:
 ```bash
 # Via the interactive menu
 ./migrator-init.sh
@@ -290,7 +273,6 @@ rm -rf ~/.venvs/migrator
 If you encounter any of these issues:
 
 - **Missing dependencies**: The installer will automatically detect and install required packages
-- **TUI compatibility problems**: A CLI fallback menu will be presented automatically
 - **Wrapper script issues**: Use `./migrator-init.sh` directly or select the "Fix PATH" option
 - **Module import errors**: Try updating with `./migrator-init.sh update` or running a clean installation
 
@@ -313,7 +295,6 @@ If you encounter any of these issues:
 - **Custom Backup Destinations**: Choose where your backups are stored:
   - Define any local folder or network share as your backup location
   - Configuration persists between sessions
-  - TUI interface for easy management
 - **Dynamic Path Handling**: Intelligent system-specific path handling:
   - Automatically detects usernames and home directory paths during backup
   - Adapts paths to match the target system during restoration
@@ -331,7 +312,6 @@ If you encounter any of these issues:
   - Get confirmation before proceeding with actual changes
 - **Migration Planning**: Generates a plan for installing packages on a new system.
 - **Configuration Restoration**: Helps restore configuration files to their original locations.
-- **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
 - **Service Management**: Run as a background service with automatic checks.
   - Run as a system-wide or user service
   - Schedule service based on specific times of day
@@ -354,8 +334,6 @@ If you encounter any of these issues:
   - `python3-pip`: Required for installing Python packages
   - `python3-distro` or the `distro` Python package (v1.5.0 or higher)
   - `setuptools`: Required for package resources (installed automatically)
-- **Optional Packages** for TUI:
-  - `py_cui`: For the Terminal User Interface (installed on demand)
 - **Access to package managers** for detection (apt, snap, flatpak, etc.)
 
 ## Installation
@@ -494,55 +472,6 @@ If you encounter issues:
    ```
 
 ## Usage
-
-### Terminal User Interface (TUI)
-
-Migrator now includes a comprehensive TUI for easier management:
-
-```bash
-# Launch the TUI
-python3 migrator-tui.py
-```
-
-The TUI provides access to all Migrator functionality through an intuitive interface:
-
-- **Dashboard**: View system status and quick actions
-- **Install/Setup**: Interactive setup wizard with distribution detection
-- **Scan System**: Scan for packages and configuration files
-- **Backups**: Create and manage backups
-- **Compare/Restore**: Compare changes and restore from backups
-- **Service Management**: Install and manage Migrator as a service
-  - Install as system or user service
-  - Configure advanced scheduling options (daily, weekly, monthly)
-  - Monitor service status
-  - Start/restart services
-
-#### TUI Dependencies
-
-To use the Terminal User Interface, you'll need additional dependencies:
-
-```bash
-# Install from requirements
-pip install py_cui
-
-# Or directly in your system (not recommended)
-sudo apt install python3-py-cui  # Debian/Ubuntu
-```
-
-#### Running the TUI Without Installation
-
-The TUI can run Migrator without a full installation. Simply clone the repository and run:
-
-```bash
-# Install the TUI dependency
-pip install py_cui
-
-# Run directly from the source directory
-cd migrator
-python3 migrator-tui.py
-```
-
-The TUI will automatically detect if Migrator is installed or not and run it accordingly.
 
 ### Command-Line Interface
 
@@ -731,20 +660,11 @@ The installer will:
 
 Once installed as a service, Migrator will run completely automatically in the background with no need for manual intervention.
 
-#### Advanced Scheduling Options
-
-Migrator uses systemd timers to provide precise scheduling control:
-
-- **Daily scheduling**: Run at a specific time each day (e.g., "03:00" for 3 AM)
-- **Weekly scheduling**: Run on a specific day and time (e.g., "Sun,23:30" for Sunday at 11:30 PM)
-- **Monthly scheduling**: Run on a specific day of each month (e.g., "15,12:00" for 15th day at noon)
-- **Custom schedules**: Use full systemd timer syntax for complex scheduling needs
-
-All scheduling options are available through both the command line interface and the TUI's advanced service scheduling screen.
+All scheduling options are available through the command line interface.
 
 #### Managing the Service
 
-The TUI provides a service management interface, or you can use these commands:
+You can use these commands to manage the service:
 
 ```bash
 # Check service status
@@ -760,49 +680,6 @@ migrator remove-service  # system service
 migrator remove-service --user  # user service
 ```
 
-#### Legacy: Manual Service Setup
-
-If you prefer to set up the service manually, you can create a systemd service file:
-
-##### Using systemd with Virtual Environment
-
-Create a file at `/etc/systemd/system/migrator.service`:
-
-```ini
-[Unit]
-Description=Migrator System Migration Utility
-After=network.target
-
-[Service]
-Type=simple
-Environment="PATH=/home/yourusername/.venvs/migrator/bin:$PATH"
-ExecStart=/home/yourusername/.venvs/migrator/bin/migrator service
-Restart=on-failure
-User=yourusername
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start the service:
-
-```bash
-sudo systemctl enable migrator.service
-sudo systemctl start migrator.service
-```
-
-##### Using cron with Virtual Environment
-
-Set up a daily cron job:
-
-```bash
-# Add to crontab
-crontab -e
-
-# Add the following line to run every day at 3 AM
-0 3 * * * source /home/yourusername/.venvs/migrator/bin/activate && migrator check
-```
-
 ## Data Storage
 
 Migrator stores its data in:
@@ -813,7 +690,7 @@ Migrator stores its data in:
 - `~/.config/migrator/`: Configuration files
   - `config.json`: User preferences including backup location
 
-Backups are stored in `~/migrator_backups/` by default, but this can be customized using the command line or TUI:
+Backups are stored in `~/migrator_backups/` by default, but this can be customized using the command line:
 
 ```bash
 # Change the default backup location
@@ -857,11 +734,8 @@ Different package managers handle versions in different ways:
 **Q: What's the difference between `migrator` and `./migrator-init.sh`?**  
 A: The `migrator` command is a wrapper script installed in your PATH that allows you to run Migrator from anywhere. The `./migrator-init.sh` script is the unified installer/launcher that must be run from the repository directory. Use `migrator` for day-to-day tasks and `./migrator-init.sh` for installation, updates, or troubleshooting.
 
-**Q: When should I use the TUI vs. CLI?**  
-A: The TUI (Terminal User Interface) provides a more graphical experience and is easier to navigate for new users. The CLI (Command Line Interface) is more reliable across different terminal setups and environments. If the TUI doesn't work in your terminal, the CLI fallback will automatically be presented.
-
 **Q: Do I need to run the installer script every time I use Migrator?**  
-A: No. After installation, you should use the wrapper scripts (`migrator` and `migrator-tui`) for daily use. Only use the installer script when updating Migrator or fixing installation issues.
+A: No. After installation, you should use the wrapper script (`migrator`) for daily use. Only use the installer script when updating Migrator or fixing installation issues.
 
 **Q: How do I know if Migrator is installed correctly?**  
 A: Run `./migrator-init.sh` and check the status indicators at the top of the menu. If all indicators show a green checkmark (✓), Migrator is installed correctly.

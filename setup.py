@@ -39,53 +39,6 @@ def install_wrapper_scripts():
     shutil.copy2(wrapper_script, main_target_path)
     os.chmod(main_target_path, 0o755)  # Make executable
     
-    # Create TUI wrapper script
-    tui_content = """#!/bin/bash
-# Wrapper script for migrator-tui
-
-# Path to the unified installer
-SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-UNIFIED_SCRIPT="${SCRIPT_DIR}/../migrator-init.sh"
-
-# If the unified script exists and is executable, use it
-if [ -f "$UNIFIED_SCRIPT" ] && [ -x "$UNIFIED_SCRIPT" ]; then
-    exec "$UNIFIED_SCRIPT" tui "$@"
-else
-    # Otherwise, find the migrator-tui.py file
-    # Directory of the original repository
-    REPO_DIR="$(cd "$(dirname "$(dirname "$(readlink -f "$0")")")"/.. && pwd)"
-    TUI_SCRIPT="${REPO_DIR}/migrator-tui.py"
-    
-    # Check if we're in a virtual environment
-    if [ -z "$VIRTUAL_ENV" ]; then
-        # Try to find and activate the migrator virtual environment
-        VENV_PATH="$HOME/.venvs/migrator"
-        if [ -d "$VENV_PATH" ] && [ -f "$VENV_PATH/bin/activate" ]; then
-            source "$VENV_PATH/bin/activate"
-        else
-            echo "Error: Not in a virtual environment and couldn't find the Migrator virtual environment."
-            echo "Please run the migrator-init.sh script first to set up the environment."
-            exit 1
-        fi
-    fi
-    
-    # Run the TUI script
-    if [ -f "$TUI_SCRIPT" ]; then
-        exec python3 "$TUI_SCRIPT" "$@"
-    else
-        echo "Error: Could not find the migrator-tui.py script."
-        echo "Please run the migrator-init.sh script to set up Migrator properly."
-        exit 1
-    fi
-fi
-"""
-    
-    # Write and install the TUI wrapper
-    tui_target_path = os.path.join(user_bin_dir, 'migrator-tui')
-    with open(tui_target_path, 'w') as f:
-        f.write(tui_content)
-    os.chmod(tui_target_path, 0o755)  # Make executable
-    
     # Create a symlink to the unified script if it exists
     unified_script = os.path.join(current_dir, 'migrator-init.sh')
     if os.path.exists(unified_script):
@@ -149,5 +102,5 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Topic :: System :: Systems Administration",
     ],
-    scripts=['migrator.sh', 'migrator-tui.py'],
+    scripts=['migrator.sh'],
 ) 
