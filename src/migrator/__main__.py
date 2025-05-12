@@ -18,17 +18,20 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
 import sys
-import argparse
 import json
-import logging
 import time
+import argparse
 import textwrap
-from datetime import datetime
-from typing import List, Dict, Any
+import platform
+import datetime
+import logging
+import fnmatch
+from typing import List, Dict, Any, Optional, Tuple
+from pathlib import Path
 
-from .main import Migrator
-from .utils.service import create_systemd_service, remove_systemd_service
-from .utils.setup_wizard import run_setup_wizard
+from migrator.main import Migrator
+from migrator.utils.service import create_systemd_service, remove_systemd_service
+from migrator.utils.setup_wizard import run_setup_wizard
 
 logger = logging.getLogger(__name__)
 
@@ -613,6 +616,45 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
                     fstab_entries = cfg.get('fstab_data', {}).get('portable_entries', [])
                     has_fstab = len(fstab_entries) > 0
                     break
+            
+            # Check for high-risk restore items
+            high_risk_items = {}
+            
+            # Check for GNOME extensions
+            has_gnome_extensions = False
+            for cfg in backup_data.get('config_files', []):
+                path = cfg.get('path', '')
+                if '/.local/share/gnome-shell/extensions/' in path or '/gnome-shell/extensions/' in path:
+                    has_gnome_extensions = True
+                    high_risk_items['gnome_extensions'] = True
+                    break
+            
+            # Check for keyrings
+            has_keyrings = False
+            for cfg in backup_data.get('config_files', []):
+                path = cfg.get('path', '')
+                if '/.local/share/keyrings/' in path or '/keyrings/' in path:
+                    has_keyrings = True
+                    high_risk_items['keyrings'] = True
+                    break
+            
+            # Check for SSH keys
+            has_ssh_keys = False
+            for cfg in backup_data.get('config_files', []):
+                path = cfg.get('path', '')
+                if '/.ssh/' in path:
+                    has_ssh_keys = True
+                    high_risk_items['ssh_keys'] = True
+                    break
+            
+            # Check for GPG keys
+            has_gpg_keys = False
+            for cfg in backup_data.get('config_files', []):
+                path = cfg.get('path', '')
+                if '/.gnupg/' in path:
+                    has_gpg_keys = True
+                    high_risk_items['gpg_keys'] = True
+                    break
                     
             # Now ask about each category
             restore_packages = False
@@ -620,6 +662,12 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
             restore_repos = True  # Default is True
             restore_fstab = True  # Default is True
             transform_paths = True  # Default is True
+            
+            # High-risk configurations
+            restore_gnome_extensions = False
+            restore_keyrings = False
+            restore_ssh_keys = False
+            restore_gpg_keys = False
             
             if packages_available:
                 print(f"\nPackages: The backup contains {len(backup_data.get('packages', []))} packages.")
@@ -633,6 +681,29 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
                 
                 if restore_configs:
                     transform_paths = input("Transform paths for the current system? (yes/no): ").lower().strip() == 'yes'
+                    
+                    # Ask about high-risk configuration items
+                    if high_risk_items:
+                        print("\nHigh-risk configuration items:")
+                        print("------------------------------")
+                        print("The following items may have compatibility issues or might not work correctly after restore.")
+                        
+                        if high_risk_items.get('gnome_extensions'):
+                            print("\nGNOME Shell extensions: These may not be compatible with your current GNOME version.")
+                            restore_gnome_extensions = input("Restore GNOME extensions? (yes/no): ").lower().strip() == 'yes'
+                        
+                        if high_risk_items.get('keyrings'):
+                            print("\nKeyrings: These are encrypted with your login password and may not be usable on a different system.")
+                            print("Consider manually exporting sensitive passwords through your password manager application instead.")
+                            restore_keyrings = input("Restore keyrings? (yes/no): ").lower().strip() == 'yes'
+                        
+                        if high_risk_items.get('ssh_keys'):
+                            print("\nSSH keys: These will need correct permissions (0600) after restore.")
+                            restore_ssh_keys = input("Restore SSH keys? (yes/no): ").lower().strip() == 'yes'
+                        
+                        if high_risk_items.get('gpg_keys'):
+                            print("\nGPG keys: These may require additional setup after restore, including setting correct permissions.")
+                            restore_gpg_keys = input("Restore GPG keys? (yes/no): ").lower().strip() == 'yes'
             else:
                 print("\nConfiguration files: No configuration files found in the backup.")
             
@@ -656,6 +727,27 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
             no_repo_restore = not restore_repos
             no_fstab_restore = not restore_fstab
             no_path_transform = not transform_paths
+            
+            # Create exclude paths list for high-risk items that user doesn't want to restore
+            exclude_paths = []
+            
+            if not restore_gnome_extensions and high_risk_items.get('gnome_extensions'):
+                exclude_paths.append('*/.local/share/gnome-shell/extensions/*')
+            
+            if not restore_keyrings and high_risk_items.get('keyrings'):
+                exclude_paths.append('*/.local/share/keyrings/*')
+            
+            if not restore_ssh_keys and high_risk_items.get('ssh_keys'):
+                exclude_paths.append('*/.ssh/*')
+            
+            if not restore_gpg_keys and high_risk_items.get('gpg_keys'):
+                exclude_paths.append('*/.gnupg/*')
+            
+            # Set the exclude_paths argument if we have paths to exclude
+            if exclude_paths and not hasattr(args, 'exclude_paths'):
+                args.exclude_paths = exclude_paths
+            elif exclude_paths and hasattr(args, 'exclude_paths'):
+                args.exclude_paths.extend(exclude_paths)
             
         except Exception as e:
             logger.error(f"Error reading backup file: {e}")
@@ -726,7 +818,8 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
             transform_paths=transform_paths,
             preview_only=preview_only,
             restore_fstab=restore_fstab,
-            preview_fstab=preview_fstab
+            preview_fstab=preview_fstab,
+            exclude_paths=args.exclude_paths if hasattr(args, 'exclude_paths') else None
         )
     
     # Handle repository restoration if requested

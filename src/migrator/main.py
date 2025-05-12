@@ -29,6 +29,7 @@ import subprocess
 import glob
 import fnmatch
 import platform
+from pathlib import Path
 from . import __version__
 
 # Import package manager modules
@@ -1230,7 +1231,7 @@ class Migrator:
             
     def execute_config_restoration(self, backup_file: str, transform_paths: bool = True,
                                   preview_only: bool = False, restore_fstab: bool = True,
-                                  preview_fstab: bool = False) -> bool:
+                                  preview_fstab: bool = False, exclude_paths: List[str] = None) -> bool:
         """Execute configuration file restoration from backup
         
         Args:
@@ -1239,6 +1240,7 @@ class Migrator:
             preview_only: Whether to only preview transformations without applying
             restore_fstab: Whether to restore portable fstab entries
             preview_fstab: Whether to only preview fstab changes
+            exclude_paths: List of paths to exclude from restoration
             
         Returns:
             True if successful, False otherwise
@@ -1334,7 +1336,30 @@ class Migrator:
                                 print(f"Error restoring fstab entries: {str(e)}")
                 else:
                     logger.info("No portable fstab entries found in backup")
+            
+            # Filter out excluded paths
+            if exclude_paths:
+                original_count = len(config_files)
+                filtered_config_files = []
+                
+                for cfg in config_files:
+                    path = cfg.get("path", "")
+                    should_exclude = False
                     
+                    for exclude_pattern in exclude_paths:
+                        if fnmatch.fnmatch(path, exclude_pattern):
+                            logger.info(f"Excluding high-risk config file: {path}")
+                            should_exclude = True
+                            break
+                    
+                    if not should_exclude:
+                        filtered_config_files.append(cfg)
+                
+                excluded_count = original_count - len(filtered_config_files)
+                if excluded_count > 0:
+                    print(f"\nExcluded {excluded_count} high-risk configuration files based on user preferences")
+                    config_files = filtered_config_files
+            
             # Restore configuration files
             configs_dir = os.path.join(os.path.dirname(backup_file), "config_files")
             transformed_count = 0
