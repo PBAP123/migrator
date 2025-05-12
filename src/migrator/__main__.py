@@ -57,8 +57,8 @@ def setup_argparse() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest='command', help='Command to execute')
     
     # Scan command
-    scan_parser = subparsers.add_parser('scan', help='Scan system and update state')
-    scan_parser.add_argument('--include-desktop', action='store_true', 
+    scan_parser = subparsers.add_parser('scan', help='Scan system for installed packages')
+    scan_parser.add_argument('--include-desktop', action='store_true',
                            help='Include desktop environment configs')
     scan_parser.add_argument('--desktop-environments', 
                            help='Comma-separated list of desktop environments to include (e.g., gnome,kde,i3)')
@@ -74,18 +74,18 @@ def setup_argparse() -> argparse.ArgumentParser:
     # Backup command
     backup_parser = subparsers.add_parser('backup', help='Backup system state')
     backup_parser.add_argument('backup_dir', nargs='?', default=None, help='Directory to store backup (defaults to configured backup directory)')
-    backup_parser.add_argument('--include-desktop', action='store_true', 
-                             help='Include desktop environment configs')
+    backup_parser.add_argument('--no-desktop', action='store_true', 
+                             help='Skip desktop environment configs (included by default)')
     backup_parser.add_argument('--desktop-environments', 
                              help='Comma-separated list of desktop environments to include (e.g., gnome,kde,i3)')
     backup_parser.add_argument('--exclude-desktop', 
                              help='Comma-separated list of desktop environments to exclude')
     backup_parser.add_argument('--no-path-variables', action='store_true',
-                             help='Disable dynamic path variable substitution for improved portability')
+                             help='Disable dynamic path variable substitution for improved portability (enabled by default)')
     backup_parser.add_argument('--no-fstab-portability', action='store_true',
-                             help='Disable selective backup of portable fstab entries')
+                             help='Disable selective backup of portable fstab entries (enabled by default)')
     backup_parser.add_argument('--no-repo-backup', action='store_true',
-                             help='Skip scanning and backing up software repositories')
+                             help='Skip scanning and backing up software repositories (included by default)')
     backup_parser.add_argument('--skip-setup-check', action='store_true',
                              help='Skip the first-run setup wizard check')
     
@@ -137,113 +137,104 @@ def setup_argparse() -> argparse.ArgumentParser:
                           help='Attempt to restore incompatible repositories (may cause system issues)')
     
     # Compare command
-    compare_parser = subparsers.add_parser('compare', help='Compare current system with backup')
-    compare_parser.add_argument('backup_file', help='Backup file to compare with')
+    compare_parser = subparsers.add_parser('compare', help='Compare current system with a backup')
+    compare_parser.add_argument('backup_file', help='Backup file to compare against')
     compare_parser.add_argument('--output', '-o', help='Output file for comparison results')
     
-    # Plan command
-    plan_parser = subparsers.add_parser('plan', help='Generate installation plan from backup')
+    # Generate plan command
+    plan_parser = subparsers.add_parser('plan', 
+                                      help='Generate installation plan from backup without applying changes')
     plan_parser.add_argument('backup_file', help='Backup file to use for planning')
     plan_parser.add_argument('--output', '-o', help='Output file for installation plan')
+    plan_parser.add_argument('--format', '-f', choices=['text', 'json'], default='text',
+                           help='Output format (text or JSON)')
     
-    # Check command
-    check_parser = subparsers.add_parser('check', help='Check for system changes since last scan')
-    check_parser.add_argument('--include-desktop', action='store_true', 
-                            help='Include desktop environment configs in check')
+    # System check command
+    check_parser = subparsers.add_parser('check', help='Check system for potential migration issues')
+    check_parser.add_argument('--output', '-o', help='Output file for check results')
+    check_parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed output')
     
-    # Service command (for background scanning)
-    service_parser = subparsers.add_parser('service', help='Run as a service for periodic checking')
-    service_parser.add_argument('--interval', '-i', type=int, default=86400,
-                                help='Interval between checks in seconds (default: 86400 - once per day)')
-    service_parser.add_argument('--include-desktop', action='store_true', 
-                              help='Include desktop environment configs in service checks')
+    # Service management command
+    service_parser = subparsers.add_parser('service', help='Manage scheduled backup service')
+    service_subparsers = service_parser.add_subparsers(dest='service_command', help='Service command')
+    
+    # Service status command
+    service_status_parser = service_subparsers.add_parser('status', help='Check status of backup service')
+    
+    # Service enable command
+    service_enable_parser = service_subparsers.add_parser('enable', help='Enable scheduled backups')
+    service_enable_parser.add_argument('--schedule', choices=['daily', 'weekly', 'monthly'], default='daily',
+                                     help='Backup schedule frequency')
+    service_enable_parser.add_argument('--time', help='Time to run backup (HH:MM format, 24-hour clock)')
+    service_enable_parser.add_argument('--day', 
+                                     help='Day to run backup (day of week for weekly, day of month for monthly)')
+    
+    # Service disable command
+    service_disable_parser = service_subparsers.add_parser('disable', help='Disable scheduled backups')
     
     # Install service command
-    install_service_parser = subparsers.add_parser('install-service', 
-                                                 help='Install Migrator as a systemd service')
-    
-    # Create a scheduling option group so users choose EITHER interval OR schedule
-    schedule_group = install_service_parser.add_mutually_exclusive_group()
-    
-    schedule_group.add_argument('--interval', '-i', type=int, default=86400,
-                              help='Interval between checks in seconds (default: 86400 - once per day)')
-    
-    schedule_group.add_argument('--schedule', '-s', 
-                              help='Systemd timer schedule (e.g., "daily", "weekly", "Mon *-*-* 14:30:00"). '
-                                   'For time of day, use "hourly", "daily@3:00", "Sun 14:30", etc.')
-    
-    schedule_group.add_argument('--daily', type=str, metavar='HH:MM',
-                              help='Run daily at specified time (24-hour format, e.g. "14:30")')
-    
-    schedule_group.add_argument('--weekly', type=str, metavar='DAY,HH:MM',
-                              help='Run weekly on specified day and time (e.g., "Mon,09:00")')
-    
-    schedule_group.add_argument('--monthly', type=str, metavar='DAY,HH:MM',
-                              help='Run monthly on specified day and time (e.g., "1,00:30" for 1st day of month)')
-    
-    install_service_parser.add_argument('--user', action='store_true',
-                                      help='Install as a user service instead of system-wide')
+    install_service_parser = subparsers.add_parser('install-service', help='Install systemd service for scheduled backups')
+    install_service_parser.add_argument('--schedule', choices=['daily', 'weekly', 'monthly'], default='daily',
+                                      help='Backup schedule frequency')
+    install_service_parser.add_argument('--time', help='Time to run backup (HH:MM format, 24-hour clock)')
+    install_service_parser.add_argument('--day', 
+                                      help='Day to run backup (day of week for weekly, day of month for monthly)')
     
     # Remove service command
-    remove_service_parser = subparsers.add_parser('remove-service', 
-                                                help='Remove Migrator systemd service')
-    remove_service_parser.add_argument('--user', action='store_true',
-                                     help='Remove user service instead of system-wide')
+    remove_service_parser = subparsers.add_parser('remove-service', help='Remove systemd service for scheduled backups')
     
     # Config command
-    config_parser = subparsers.add_parser('config', help='Configure Migrator settings')
-    config_subparsers = config_parser.add_subparsers(dest='subcommand', help='Configuration command')
+    config_parser = subparsers.add_parser('config', help='Manage Migrator configuration')
+    config_subparsers = config_parser.add_subparsers(dest='config_command', help='Config command')
     
-    # Get backup directory command
-    get_backup_dir_parser = config_subparsers.add_parser('get-backup-dir', 
-                                                      help='Get the current backup directory')
+    # Backup dir configuration
+    config_get_backup_dir_parser = config_subparsers.add_parser('get-backup-dir', 
+                                                             help='Show the current backup directory')
     
-    # Set backup directory command
-    set_backup_dir_parser = config_subparsers.add_parser('set-backup-dir', 
-                                                       help='Set the default backup directory')
-    set_backup_dir_parser.add_argument('backup_dir', help='Path to backup directory')
+    config_set_backup_dir_parser = config_subparsers.add_parser('set-backup-dir',
+                                                             help='Set the default backup directory')
+    config_set_backup_dir_parser.add_argument('path', help='Path to use for backups')
     
-    # Backup retention commands
-    retention_group = config_subparsers.add_parser('backup-retention', 
-                                                help='Configure backup retention rules')
-    retention_subparsers = retention_group.add_subparsers(dest='retention_command', help='Retention command')
+    # Backup retention configuration
+    config_backup_retention_parser = config_subparsers.add_parser('backup-retention',
+                                                               help='Configure backup retention policy')
+    retention_subparsers = config_backup_retention_parser.add_subparsers(dest='retention_command', 
+                                                                    help='Retention command')
     
-    # Get backup retention settings
-    get_retention_parser = retention_subparsers.add_parser('get', 
-                                                        help='Show current backup retention settings')
+    retention_get_parser = retention_subparsers.add_parser('get', help='Show current retention settings')
     
-    # Enable backup retention
-    enable_retention_parser = retention_subparsers.add_parser('enable', 
-                                                          help='Enable backup retention')
+    retention_enable_parser = retention_subparsers.add_parser('enable', 
+                                                          help='Enable automatic cleanup of old backups')
     
-    # Disable backup retention
-    disable_retention_parser = retention_subparsers.add_parser('disable', 
-                                                           help='Disable backup retention')
+    retention_disable_parser = retention_subparsers.add_parser('disable',
+                                                           help='Disable automatic cleanup of old backups')
     
-    # Set retention mode to count
-    set_count_retention_parser = retention_subparsers.add_parser('set-count', 
-                                                              help='Keep only the most recent N backups')
-    set_count_retention_parser.add_argument('count', type=int, help='Number of backups to keep')
+    retention_set_mode_parser = retention_subparsers.add_parser('set-mode',
+                                                           help='Set retention mode (count or age)')
+    retention_set_mode_parser.add_argument('mode', choices=['count', 'age'],
+                                        help='Retention mode: count=keep N most recent backups, '
+                                            'age=keep backups newer than N days')
     
-    # Set retention mode to age
-    set_age_retention_parser = retention_subparsers.add_parser('set-age', 
-                                                            help='Keep backups newer than X days')
-    set_age_retention_parser.add_argument('days', type=int, help='Number of days to keep backups')
+    retention_set_count_parser = retention_subparsers.add_parser('set-count',
+                                                            help='Set number of backups to keep (for count mode)')
+    retention_set_count_parser.add_argument('count', type=int, help='Number of backups to keep')
     
-    # List hosts command
-    list_hosts_parser = config_subparsers.add_parser('list-hosts',
-                                                  help='List all hosts that have backups')
+    retention_set_age_parser = retention_subparsers.add_parser('set-age',
+                                                          help='Set age in days for backups to keep (for age mode)')
+    retention_set_age_parser.add_argument('days', type=int, help='Age in days')
     
-    # Get host backups command
-    get_host_backups_parser = config_subparsers.add_parser('get-host-backups',
-                                                        help='List backups for a specific host')
-    get_host_backups_parser.add_argument('hostname', help='Hostname to get backups for')
-    get_host_backups_parser.add_argument('--show-detail', '-d', action='store_true',
-                                      help='Show detailed metadata for each backup')
+    # Multi-host configuration
+    config_get_hosts_parser = config_subparsers.add_parser('list-hosts',
+                                                      help='List all hosts with backups')
+    
+    config_get_host_backups_parser = config_subparsers.add_parser('get-host-backups',
+                                                            help='Show backups for a specific host')
+    config_get_host_backups_parser.add_argument('hostname', help='Hostname to query')
+    config_get_host_backups_parser.add_argument('--show-detail', '-d', action='store_true',
+                                          help='Show detailed metadata for each backup')
     
     # List backups command
-    list_backups_parser = subparsers.add_parser('list-backups', 
-                                              help='List available backups with metadata')
+    list_backups_parser = subparsers.add_parser('list-backups', help='List available backups')
     list_backups_parser.add_argument('--backup-dir', 
                                    help='Directory to search for backups (defaults to configured backup directory)')
     list_backups_parser.add_argument('--show-detail', '-d', action='store_true',
@@ -342,8 +333,8 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     else:
         print(f"Backing up system state to {backup_dir}...")
     
-    # Process desktop environment options
-    include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
+    # Process desktop environment options - default is now TRUE (include desktop)
+    include_desktop = not args.no_desktop if hasattr(args, 'no_desktop') else True
     desktop_envs = None
     exclude_desktop = None
     
@@ -475,48 +466,30 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         print(f"  • {report['config_files'].get('to_restore', 0)} configuration files will be restored")
         print(f"  • {report['config_files'].get('conflicts', 0)} configuration files have conflicts")
         
-        if report['config_files'].get('paths', []):
-            print("\nSample of configuration files to be restored:")
-            for path in report['config_files']['paths'][:5]:
-                print(f"  • {path}")
-            if len(report['config_files']['paths']) > 5:
-                print(f"  ... and {len(report['config_files']['paths']) - 5} more files")
-        
         # Path transformations section
-        if report.get('path_transformations', {}):
+        if report.get('path_transformations', {}).get('examples', []):
             print("\nPATH TRANSFORMATIONS:")
-            print("The following path transformations would be applied:")
-            for i, (src_path, tgt_path) in enumerate(list(report['path_transformations'].items())[:5], 1):
-                print(f"  {i}. {src_path} -> {tgt_path}")
-            if len(report['path_transformations']) > 5:
-                print(f"  ... and {len(report['path_transformations']) - 5} more transformations")
+            examples = report['path_transformations']['examples'][:3]
+            for from_path, to_path in examples:
+                print(f"  • {from_path} → {to_path}")
+            if len(report['path_transformations']['examples']) > 3:
+                print(f"  ... and {len(report['path_transformations']['examples']) - 3} more transformations")
         
         # Fstab entries section
-        if report.get('fstab_entries', []):
+        if "fstab" in report:
             print("\nFSTAB ENTRIES:")
-            print("The following portable fstab entries would be appended:")
-            for i, entry in enumerate(report['fstab_entries'][:5], 1):
-                print(f"  {i}. {entry}")
-            if len(report['fstab_entries']) > 5:
-                print(f"  ... and {len(report['fstab_entries']) - 5} more entries")
-                
-        # Repository section
-        if report.get('repositories', {}).get('total', 0) > 0:
+            entries = report["fstab"].get("portable_entries", [])
+            if entries:
+                print(f"  • {len(entries)} portable fstab entries will be appended to /etc/fstab")
+            else:
+                print("  • No portable fstab entries found in backup")
+        
+        # Repositories section
+        if "repositories" in report:
             print("\nSOFTWARE REPOSITORIES:")
-            print(f"  • {report['repositories'].get('to_restore', 0)} repositories will be restored")
-            print(f"  • {report['repositories'].get('compatibility_issues', 0)} repositories have compatibility issues")
-            
-            if report['repositories'].get('repos', []):
-                print("\nRepositories to be restored:")
-                compatible_repos = [
-                    r for r in report['repositories']['repos'] 
-                    if not any(c['name'] == r['name'] and c['type'] == 'repository_compatibility' 
-                              for c in report.get('conflicts', []))
-                ]
-                for i, repo in enumerate(compatible_repos[:5], 1):
-                    print(f"  {i}. {repo['name']} ({repo['type']})")
-                if len(compatible_repos) > 5:
-                    print(f"  ... and {len(compatible_repos) - 5} more repositories")
+            print(f"  • {report['repositories'].get('total', 0)} repositories found in backup")
+            print(f"  • {report['repositories'].get('compatible', 0)} repositories are compatible with your system")
+            print(f"  • {report['repositories'].get('incompatible', 0)} repositories have compatibility issues")
         
         # Conflicts section
         if report.get('conflicts', []):
@@ -546,6 +519,95 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     # Default behavior: just restore the state without execution
     execute_plan = args.execute if hasattr(args, 'execute') else False
     
+    # Check if any specific command line arguments were provided for restore categories
+    has_category_args = any([
+        hasattr(args, 'packages_only') and args.packages_only,
+        hasattr(args, 'configs_only') and args.configs_only,
+        hasattr(args, 'no_repo_restore') and args.no_repo_restore,
+        hasattr(args, 'no_fstab_restore') and args.no_fstab_restore,
+        hasattr(args, 'path_transform_preview') and args.path_transform_preview,
+        hasattr(args, 'preview_fstab') and args.preview_fstab,
+        hasattr(args, 'preview_repos') and args.preview_repos
+    ])
+    
+    # If execution is requested but no specific categories were specified via command line,
+    # enter interactive mode to ask about each category
+    if execute_plan and not has_category_args:
+        print("\nInteractive Restore Mode:")
+        print("-----------------------")
+        print("You can choose which parts of the backup to restore.")
+        
+        # Load backup file to get info about what's available
+        try:
+            with open(args.backup_file, 'r') as f:
+                backup_data = json.load(f)
+            
+            packages_available = len(backup_data.get('packages', [])) > 0
+            configs_available = len(backup_data.get('config_files', [])) > 0
+            repos_available = 'repositories' in backup_data and len(backup_data['repositories'].get('repositories', [])) > 0
+            
+            has_fstab = False
+            for cfg in backup_data.get('config_files', []):
+                if cfg.get('path') == '/etc/fstab.portable' and 'fstab_data' in cfg:
+                    fstab_entries = cfg.get('fstab_data', {}).get('portable_entries', [])
+                    has_fstab = len(fstab_entries) > 0
+                    break
+                    
+            # Now ask about each category
+            restore_packages = False
+            restore_configs = False
+            restore_repos = True  # Default is True
+            restore_fstab = True  # Default is True
+            transform_paths = True  # Default is True
+            
+            if packages_available:
+                print(f"\nPackages: The backup contains {len(backup_data.get('packages', []))} packages.")
+                restore_packages = input("Restore packages? (yes/no): ").lower().strip() == 'yes'
+            else:
+                print("\nPackages: No packages found in the backup.")
+            
+            if configs_available:
+                print(f"\nConfiguration files: The backup contains {len(backup_data.get('config_files', []))} configuration files.")
+                restore_configs = input("Restore configuration files? (yes/no): ").lower().strip() == 'yes'
+                
+                if restore_configs:
+                    transform_paths = input("Transform paths for the current system? (yes/no): ").lower().strip() == 'yes'
+            else:
+                print("\nConfiguration files: No configuration files found in the backup.")
+            
+            if repos_available:
+                print(f"\nSoftware repositories: The backup contains {len(backup_data['repositories'].get('repositories', []))} software repositories.")
+                restore_repos = input("Restore software repositories? (yes/no): ").lower().strip() == 'yes'
+            else:
+                print("\nSoftware repositories: No repositories found in the backup.")
+                restore_repos = False
+            
+            if has_fstab:
+                print("\nFstab entries: The backup contains portable fstab entries.")
+                restore_fstab = input("Restore portable fstab entries? (yes/no): ").lower().strip() == 'yes'
+            else:
+                print("\nFstab entries: No portable fstab entries found in the backup.")
+                restore_fstab = False
+            
+            # Set the values based on interactive input
+            packages_only = restore_packages and not restore_configs
+            configs_only = restore_configs and not restore_packages
+            no_repo_restore = not restore_repos
+            no_fstab_restore = not restore_fstab
+            no_path_transform = not transform_paths
+            
+        except Exception as e:
+            logger.error(f"Error reading backup file: {e}")
+            print(f"Error reading backup file: {e}")
+            return 1
+    else:
+        # Use the command line arguments
+        packages_only = args.packages_only if hasattr(args, 'packages_only') else False
+        configs_only = args.configs_only if hasattr(args, 'configs_only') else False
+        no_repo_restore = args.no_repo_restore if hasattr(args, 'no_repo_restore') else False
+        no_fstab_restore = args.no_fstab_restore if hasattr(args, 'no_fstab_restore') else False
+        no_path_transform = args.no_path_transform if hasattr(args, 'no_path_transform') else False
+    
     # Get version policy options
     version_policy = args.version_policy if hasattr(args, 'version_policy') else 'prefer-newer'
     allow_downgrade = args.allow_downgrade if hasattr(args, 'allow_downgrade') else False
@@ -556,7 +618,7 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         print("Package downgrades allowed if needed")
     
     # Process path transformation options
-    transform_paths = not args.no_path_transform if hasattr(args, 'no_path_transform') else True
+    transform_paths = not no_path_transform
     preview_only = args.path_transform_preview if hasattr(args, 'path_transform_preview') else False
     
     if not transform_paths:
@@ -567,7 +629,7 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         print("Path transformation enabled - system-specific paths will be adapted")
     
     # Process fstab options
-    restore_fstab = not args.no_fstab_restore if hasattr(args, 'no_fstab_restore') else True
+    restore_fstab = not no_fstab_restore
     preview_fstab = args.preview_fstab if hasattr(args, 'preview_fstab') else False
     
     if not restore_fstab:
@@ -587,7 +649,7 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     print("System state restored successfully.")
     
     # Execute installation plan if requested
-    if execute_plan or (hasattr(args, 'packages_only') and args.packages_only):
+    if execute_plan and not configs_only:
         print("Installing packages from backup...")
         app.execute_installation_plan(
             args.backup_file,
@@ -596,7 +658,7 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         )
     
     # Execute config restoration if requested
-    if execute_plan or (hasattr(args, 'configs_only') and args.configs_only):
+    if execute_plan and not packages_only:
         print("Restoring configuration files from backup...")
         app.execute_config_restoration(
             args.backup_file,
@@ -607,7 +669,7 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         )
     
     # Handle repository restoration if requested
-    restore_repos = not args.no_repo_restore if hasattr(args, 'no_repo_restore') else True
+    restore_repos = not no_repo_restore
     preview_repos = args.preview_repos if hasattr(args, 'preview_repos') else False
     force_incompatible = args.force_incompatible_repos if hasattr(args, 'force_incompatible_repos') else False
     
@@ -644,29 +706,30 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
                 # Restore repositories
                 successes, issues = repo_manager.restore_repositories(
                     repos_info, 
-                    dry_run=preview_repos
+                    dry_run=preview_repos,
+                    force_incompatible=force_incompatible
                 )
                 
+                # Print success messages
                 if successes:
-                    if preview_repos:
-                        print("\nRepositories that would be restored:")
-                    else:
-                        print("\nSuccessfully restored repositories:")
-                    for success in successes:
-                        print(f"  - {success}")
+                    print(f"\nSuccessfully restored {len(successes)} repositories:")
+                    for i, success in enumerate(successes[:5], 1):
+                        print(f"  {i}. {success}")
+                    if len(successes) > 5:
+                        print(f"  ... and {len(successes) - 5} more repositories")
                 
+                # Print issues
                 if issues:
-                    if preview_repos:
-                        print("\nIssues that would occur during repository restoration:")
-                    else:
-                        print("\nIssues encountered during repository restoration:")
-                    for issue in issues:
-                        print(f"  - {issue['message']}")
-            else:
-                print("\nNo custom repositories found in backup")
+                    print(f"\nEncountered {len(issues)} issues during repository restoration:")
+                    for i, issue in enumerate(issues[:5], 1):
+                        print(f"  {i}. {issue['message']}")
+                    if len(issues) > 5:
+                        print(f"  ... and {len(issues) - 5} more issues")
         except Exception as e:
-            print(f"Error processing repositories: {e}")
+            logger.error(f"Error restoring repositories: {e}")
+            print(f"Error restoring repositories: {e}")
     
+    print("\nRestore operation completed.")
     return 0
 
 def handle_compare(app: Migrator, args: argparse.Namespace) -> int:
@@ -890,21 +953,21 @@ def handle_remove_service(app: Migrator, args: argparse.Namespace) -> int:
 
 def handle_config(app: Migrator, args: argparse.Namespace) -> int:
     """Handle config command"""
-    if not hasattr(args, 'subcommand') or not args.subcommand:
+    if not hasattr(args, 'config_command') or not args.config_command:
         print("Error: No configuration subcommand specified")
         return 1
         
-    if args.subcommand == 'get-backup-dir':
+    if args.config_command == 'get-backup-dir':
         backup_dir = app.get_backup_dir()
         print(f"Current backup directory: {backup_dir}")
         return 0
         
-    elif args.subcommand == 'set-backup-dir':
-        if not hasattr(args, 'backup_dir') or not args.backup_dir:
+    elif args.config_command == 'set-backup-dir':
+        if not hasattr(args, 'path') or not args.path:
             print("Error: No backup directory specified")
             return 1
             
-        backup_dir = os.path.expanduser(args.backup_dir)
+        backup_dir = os.path.expanduser(args.path)
         success = app.set_backup_dir(backup_dir)
         
         if success:
@@ -914,7 +977,7 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
             print(f"Failed to set backup directory to: {backup_dir}")
             return 1
             
-    elif args.subcommand == 'list-hosts':
+    elif args.config_command == 'list-hosts':
         hosts = app.list_backup_hosts()
         
         if not hosts:
@@ -927,7 +990,7 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
             
         return 0
         
-    elif args.subcommand == 'get-host-backups':
+    elif args.config_command == 'get-host-backups':
         if not hasattr(args, 'hostname') or not args.hostname:
             print("Error: No hostname specified")
             return 1
@@ -972,7 +1035,7 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
         
         return 0
             
-    elif args.subcommand == 'backup-retention':
+    elif args.config_command == 'backup-retention':
         if not hasattr(args, 'retention_command') or not args.retention_command:
             print("Error: No retention command specified")
             return 1
@@ -992,6 +1055,33 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
         elif args.retention_command == 'disable':
             app.disable_backup_retention()
             print("Backup retention disabled.")
+            return 0
+        
+        elif args.retention_command == 'set-mode':
+            if not hasattr(args, 'mode') or not args.mode:
+                print("Error: No retention mode specified")
+                return 1
+            
+            mode = args.mode
+            if mode not in ['count', 'age']:
+                print("Error: Invalid retention mode specified. Use 'count' or 'age'.")
+                return 1
+            
+            if mode == 'count':
+                if not hasattr(args, 'count') or not args.count:
+                    print("Error: No count specified for count mode")
+                    return 1
+                
+                app.set_backup_retention_count(args.count)
+                print(f"Backup retention set to keep only the most recent {args.count} backups.")
+            else:
+                if not hasattr(args, 'days') or not args.days:
+                    print("Error: No days specified for age mode")
+                    return 1
+                
+                app.set_backup_retention_age(args.days)
+                print(f"Backup retention set to keep backups newer than {args.days} days.")
+            
             return 0
         
         elif args.retention_command == 'set-count':
@@ -1017,7 +1107,7 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
             return 1
     
     else:
-        print(f"Unknown configuration subcommand: {args.subcommand}")
+        print(f"Unknown configuration subcommand: {args.config_command}")
         return 1
 
 def handle_locate_backup(app: Migrator, args: argparse.Namespace) -> int:

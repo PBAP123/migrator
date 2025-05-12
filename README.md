@@ -34,7 +34,7 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Flatpak packages
   - AppImages
 - **Configuration Tracking**: Identifies and tracks both system and user configuration files.
-- **Desktop Environment Backup**: Preserves your personalized desktop experience:
+- **Desktop Environment Backup**: Preserves your personalized desktop experience (included by default):
   - Gnome settings and extensions
   - KDE Plasma configurations
   - XFCE, LXDE, Cinnamon, MATE settings
@@ -57,6 +57,10 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Analyzes /etc/fstab during backup and identifies portable entries
   - Only backs up entries for network shares, special filesystems and non-hardware-specific mounts
   - Ensures hardware-dependent entries aren't transferred between systems
+- **Interactive Restore Process**: When restoring without specific options, prompts you about which parts to restore:
+  - Guided experience that walks through each category (packages, configs, repositories, fstab)
+  - Gives you control over exactly what parts of the backup to restore
+  - Provides information about what's available in the backup for each category
 - **Dry Run Mode**: Preview all changes before execution:
   - See exactly what packages will be installed
   - Review configuration files that will be modified
@@ -201,8 +205,8 @@ You can access it directly:
 To create a complete system backup:
 
 ```bash
-# Step 1: Scan your system
-migrator scan --include-desktop
+# Step 1: Scan your system (desktop configs are included by default)
+migrator scan
 
 # Step 2: Create the backup (stores in ~/migrator_backups by default)
 migrator backup
@@ -231,16 +235,18 @@ migrator restore PATH_TO_YOUR_BACKUP.json --dry-run
 migrator restore PATH_TO_YOUR_BACKUP.json --execute
 ```
 
-For more control over the restoration process:
+When using `--execute` without specific category flags, Migrator will enter interactive mode and prompt you about each category of content to restore. This gives you fine-grained control over the restore process without having to remember all the command line options.
+
+For more control over the restoration process using command-line arguments:
 ```bash
 # Restore only packages
-migrator restore backup.json --packages-only
+migrator restore backup.json --execute --packages-only
 
 # Restore only configuration files
-migrator restore backup.json --configs-only
+migrator restore backup.json --execute --configs-only
 
 # Restore with specific version handling
-migrator restore backup.json --version-policy=prefer-newer
+migrator restore backup.json --execute --version-policy=prefer-newer
 ```
 
 ### Comparing Systems
@@ -548,6 +554,9 @@ migrator restore ~/backups/migrator_backup_20230101_120000.json --dry-run
 # Restore with automatic path transformation (enabled by default)
 migrator restore ~/backups/migrator_backup_20230101_120000.json --execute
 
+# Restore with interactive prompts for each category
+migrator restore ~/backups/migrator_backup_20230101_120000.json --execute
+
 # Restore without transforming paths (keep them as-is from the source system)
 migrator restore ~/backups/migrator_backup_20230101_120000.json --execute --no-path-transform
 
@@ -616,6 +625,26 @@ This generates a detailed report showing:
 
 After reviewing the report, you'll be prompted to confirm if you want to proceed with the actual restore operation. This gives you a clear understanding of the impact before committing to any changes.
 
+### Interactive Restore Mode
+
+When restoring with the `--execute` option without specifying any category flags like `--packages-only` or `--configs-only`, Migrator enters an interactive mode:
+
+```bash
+migrator restore ~/backups/migrator_backup_20230101_120000.json --execute
+```
+
+In this mode, Migrator will:
+
+1. Analyze the backup to identify what's available
+2. Present a series of prompts about each category (packages, configuration files, repositories, fstab entries)
+3. Show you how many items are in each category
+4. Let you decide which parts to restore
+
+This interactive approach gives you precise control over the restoration process without needing to remember all the command-line options. It's especially helpful when:
+- You want to selectively restore only certain parts
+- You're unsure what's in the backup
+- You're restoring to a different system and want to be cautious
+
 ### First-Run Restore on New Systems
 
 When restoring to a completely fresh system, Migrator provides specialized handling to help you locate your backup files:
@@ -650,17 +679,21 @@ This eliminates friction when migrating to a new system, as Migrator will intell
 
 ### Desktop Environment Configuration Backup
 
-Migrator intelligently handles desktop environment and window manager configurations:
+Migrator intelligently handles desktop environment and window manager configurations (included by default in backups):
 
 ```bash
-# Backup desktop configurations with system scan
-migrator scan --include-desktop
+# Desktop configurations are included by default in scan and backup operations
+migrator scan
+migrator backup
 
 # Specify which desktop environments to include
 migrator scan --desktop-environments=gnome,kde,i3
 
 # Exclude specific desktop configurations
 migrator scan --exclude-desktop=cinnamon
+
+# Skip desktop environment configurations entirely
+migrator backup --no-desktop
 ```
 
 Desktop configuration backups include:
