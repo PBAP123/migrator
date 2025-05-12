@@ -986,3 +986,73 @@ This generates a detailed report showing:
 5. **Conflicts and Issues**: Highlights potential problems before they occur
 
 After reviewing the report, you'll be prompted to confirm if you want to proceed with the actual restore operation. This gives you a clear understanding of the impact before committing to any changes.
+
+# Enhanced Configuration Management
+
+Migrator provides powerful ways to customize which configuration files are included in your backups:
+
+## Advanced Configuration Scanning
+
+Migrator automatically scans and backs up configuration from:
+
+- System-wide locations (`/etc`, `/usr/local/etc`)  
+- User-specific settings (`~/.config`, dotfiles in home directory)
+- Important directories in `~/.local/share` (applications, fonts, themes, etc.)
+- Desktop environment and window manager settings
+- Application-specific directories (`~/.mozilla`, `~/.thunderbird`, `~/.gnupg`, etc.)
+- User script directories (`~/bin`, `~/.local/bin`)
+
+## Customizing Config Backup Scope
+
+```bash
+# Include specific additional paths
+migrator backup --include-paths=~/custom/configs,~/projects/settings
+
+# Exclude specific paths from backup
+migrator backup --exclude-paths=~/.config/large-app,~/.local/share/big-data
+
+# Create a minimal backup (essential preferences only)
+migrator backup --minimal
+```
+
+The `--minimal` option creates a focused backup containing only essential user preferences while excluding application data directories. This results in smaller, more portable backups.
+
+## Smart Warnings for Non-Portable Configs
+
+Migrator provides warnings when backing up configuration files that might have portability issues:
+
+- Keyring files that are encrypted with your login password
+- Browser profiles that may contain large caches
+- Hardware-specific configurations
+- Security-sensitive files that might need special handling
+
+```
+PORTABILITY WARNINGS:
+----------------------
+The following paths in your backup may have portability issues:
+
+- ~/.local/share/keyrings:
+  WARNING: Keyring files are encrypted with your login password and may not be usable
+  on a different system if your password changes...
+
+Do you want to continue with the backup?
+Continue? (y/n) [y]:
+```
+
+## Granular Control over ~/.local/share
+
+Migrator provides intelligent filtering of the `~/.local/share` directory:
+
+- Automatically includes high-value, typically small configuration directories
+  - `~/.local/share/applications` - Desktop entries
+  - `~/.local/share/fonts` - User fonts
+  - `~/.local/share/icons` - Icon themes
+  - `~/.local/share/themes` - GTK themes
+  - `~/.local/share/mime` - MIME type definitions
+  - Various DE-specific settings directories
+
+- Automatically excludes large data directories
+  - `~/.local/share/Steam` - Game installations
+  - `~/.local/share/Trash` - Deleted files
+  - `~/.local/share/flatpak` - Flatpak runtime data
+  - Cache directories and other large data

@@ -26,6 +26,10 @@ import time
 from typing import List, Dict, Any, Optional, Set, Tuple
 import shutil
 import subprocess
+import glob
+import fnmatch
+import platform
+from . import __version__
 
 # Import package manager modules
 from .package_managers.factory import PackageManagerFactory
@@ -43,7 +47,7 @@ from .utils.config import config
 from .utils.sysvar import system_variables, SystemVariables
 from .utils.fstab import FstabManager
 from .utils.progress import ProgressTracker, MultiProgressTracker, OperationType
-from .utils.repositories import RepositoryManager
+from .utils.repositories import RepositoryManager, Repository
 
 # Configure logging
 logging.basicConfig(
@@ -99,10 +103,19 @@ class Migrator:
             try:
                 with open(self.state_file, 'r') as f:
                     state = json.load(f)
+                
+                # Extract include/exclude paths from the loaded state
+                self.include_paths = state.get("include_paths", [])
+                self.exclude_paths = state.get("exclude_paths", [])
+                
                 logger.info(f"Loaded system state from {self.state_file}")
                 return state
             except (json.JSONDecodeError, IOError) as e:
                 logger.error(f"Error loading system state: {e}")
+        
+        # Initialize include/exclude paths from config
+        self.include_paths = config.get("include_paths", [])
+        self.exclude_paths = config.get("exclude_paths", [])
         
         # Initialize a new state
         return {
@@ -113,15 +126,39 @@ class Migrator:
                 "last_updated": datetime.datetime.now().isoformat()
             },
             "packages": [],
-            "config_files": []
+            "config_files": [],
+            "include_paths": self.include_paths,
+            "exclude_paths": self.exclude_paths
         }
     
-    def _save_state(self) -> None:
+    def _save_state(self) -> bool:
         """Save the current system state to disk"""
-        # Update last updated timestamp
-        self.state["system_info"]["last_updated"] = datetime.datetime.now().isoformat()
-        
         try:
+            # Update last updated timestamp
+            self.state["system_info"]["last_updated"] = datetime.datetime.now().isoformat()
+            
+            # Ensure the packages and config_files are updated
+            self.state["packages"] = [pkg.to_dict() for pkg in self.installed_packages]
+            self.state["config_files"] = []
+            
+            # Save include_paths and exclude_paths
+            self.state["include_paths"] = self.include_paths
+            self.state["exclude_paths"] = self.exclude_paths
+            
+            # Include repository sources if available
+            if hasattr(self, 'repo_sources') and self.repo_sources:
+                self.state["repositories"] = self.repo_sources
+            
+            # Process configuration files
+            for cfg in self.config_files:
+                cfg_dict = cfg.to_dict()
+                
+                # Add special processing for certain config files
+                if cfg.path == "/etc/fstab.portable" and hasattr(cfg, 'fstab_data'):
+                    cfg_dict["fstab_data"] = cfg.fstab_data
+                    
+                self.state["config_files"].append(cfg_dict)
+            
             # Create a backup of the previous state file
             if os.path.exists(self.state_file):
                 backup_file = f"{self.state_file}.bak"
@@ -132,8 +169,10 @@ class Migrator:
                 json.dump(self.state, f, indent=2)
             
             logger.info(f"Saved system state to {self.state_file}")
-        except IOError as e:
+            return True
+        except Exception as e:
             logger.error(f"Error saving system state: {e}")
+            return False
     
     def scan_packages(self, test_mode=False) -> List[Package]:
         """Scan the system for installed packages
@@ -187,13 +226,16 @@ class Migrator:
         return all_packages
     
     def scan_config_files(self, include_desktop=True, 
-                          desktop_environments=None, exclude_desktop=None) -> List[ConfigFile]:
+                          desktop_environments=None, exclude_desktop=None,
+                          include_paths=None, exclude_paths=None) -> List[ConfigFile]:
         """Scan the system for configuration files
         
         Args:
             include_desktop: Whether to include desktop environment configs
             desktop_environments: List of specific desktop environments to include
             exclude_desktop: List of desktop environments to exclude
+            include_paths: List of additional paths to include in the scan
+            exclude_paths: List of paths to exclude from the scan
         """
         all_configs = []
         
@@ -207,7 +249,9 @@ class Migrator:
             # System configs
             progress.update(status="Scanning system configurations")
             logger.info("Scanning for system configuration files...")
-            system_configs = self.system_config_tracker.find_config_files()
+            system_configs = self.system_config_tracker.find_config_files(
+                exclude_paths=exclude_paths
+            )
             all_configs.extend(system_configs)
             progress.update(1, f"Found {len(system_configs)} system config files")
             logger.info(f"Found {len(system_configs)} system configuration files")
@@ -215,7 +259,10 @@ class Migrator:
             # User configs
             progress.update(status="Scanning user configurations")
             logger.info("Scanning for user configuration files...")
-            user_configs = self.user_config_tracker.find_config_files()
+            user_configs = self.user_config_tracker.find_config_files(
+                include_paths=include_paths,
+                exclude_paths=exclude_paths
+            )
             all_configs.extend(user_configs)
             progress.update(1, f"Found {len(user_configs)} user config files")
             logger.info(f"Found {len(user_configs)} user configuration files")
@@ -227,13 +274,29 @@ class Migrator:
                 de_configs = self.desktop_env_tracker.find_config_files(
                     include_desktop=include_desktop,
                     desktop_environments=desktop_environments,
-                    exclude_desktop=exclude_desktop
+                    exclude_desktop=exclude_desktop,
+                    exclude_paths=exclude_paths
                 )
                 all_configs.extend(de_configs)
                 progress.update(1, f"Found {len(de_configs)} desktop config files")
                 logger.info(f"Found {len(de_configs)} desktop environment configuration files")
         
         logger.info(f"Total configuration files found: {len(all_configs)}")
+        
+        # Add any additional explicitly included paths
+        if include_paths:
+            additional_configs = self._add_additional_paths(include_paths, all_configs)
+            if additional_configs:
+                all_configs.extend(additional_configs)
+                logger.info(f"Added {len(additional_configs)} user-specified config files")
+        
+        # Remove any explicitly excluded paths
+        if exclude_paths:
+            initial_count = len(all_configs)
+            all_configs = self._filter_excluded_paths(all_configs, exclude_paths)
+            excluded_count = initial_count - len(all_configs)
+            if excluded_count > 0:
+                logger.info(f"Excluded {excluded_count} config files from user-specified exclusions")
         
         # Check if we have portable fstab entries
         if self.system_config_tracker.has_portable_fstab_entries():
@@ -250,241 +313,293 @@ class Migrator:
         
         return all_configs
     
+    def _add_additional_paths(self, include_paths: List[str], existing_configs: List[ConfigFile]) -> List[ConfigFile]:
+        """Add user-specified paths to the config scan
+        
+        Args:
+            include_paths: List of additional paths to include
+            existing_configs: List of already found config files
+            
+        Returns:
+            List of additionally found config files
+        """
+        additional_configs = []
+        existing_paths = {config.path for config in existing_configs}
+        
+        for path in include_paths:
+            # Expand path (handle ~ and globs)
+            expanded_path = os.path.expanduser(path)
+            
+            # For globs, find all matching files
+            if '*' in expanded_path:
+                try:
+                    for matching_path in glob.glob(expanded_path):
+                        if os.path.isfile(matching_path) and matching_path not in existing_paths:
+                            # Create a new config file object
+                            if matching_path.startswith('/etc'):
+                                config = self.system_config_tracker.track_config_file(matching_path)
+                            else:
+                                config = self.user_config_tracker.track_config_file(matching_path)
+                                
+                            if config:
+                                additional_configs.append(config)
+                                existing_paths.add(config.path)
+                                logger.debug(f"Added user-specified path: {matching_path}")
+                except Exception as e:
+                    logger.error(f"Error processing include path pattern {path}: {e}")
+            # For directories, add all files within
+            elif os.path.isdir(expanded_path):
+                try:
+                    for root, dirs, files in os.walk(expanded_path):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            if os.path.isfile(file_path) and file_path not in existing_paths:
+                                # Create a new config file object based on path
+                                if file_path.startswith('/etc'):
+                                    config = self.system_config_tracker.track_config_file(file_path)
+                                else:
+                                    config = self.user_config_tracker.track_config_file(file_path)
+                                    
+                                if config:
+                                    additional_configs.append(config)
+                                    existing_paths.add(config.path)
+                                    logger.debug(f"Added user-specified path: {file_path}")
+                except Exception as e:
+                    logger.error(f"Error walking directory {expanded_path}: {e}")
+            # For individual files
+            elif os.path.isfile(expanded_path) and expanded_path not in existing_paths:
+                # Create a new config file object based on path
+                if expanded_path.startswith('/etc'):
+                    config = self.system_config_tracker.track_config_file(expanded_path)
+                else:
+                    config = self.user_config_tracker.track_config_file(expanded_path)
+                    
+                if config:
+                    additional_configs.append(config)
+                    logger.debug(f"Added user-specified path: {expanded_path}")
+        
+        return additional_configs
+    
+    def _filter_excluded_paths(self, configs: List[ConfigFile], exclude_paths: List[str]) -> List[ConfigFile]:
+        """Filter out excluded paths from the config list
+        
+        Args:
+            configs: List of config files
+            exclude_paths: List of paths to exclude
+            
+        Returns:
+            Filtered list of config files
+        """
+        if not exclude_paths:
+            return configs
+        
+        # Process exclude paths to handle globs and expansion
+        expanded_exclude_patterns = []
+        for path in exclude_paths:
+            expanded_path = os.path.expanduser(path)
+            expanded_exclude_patterns.append(expanded_path)
+        
+        # Filter out configs that match any exclude pattern
+        filtered_configs = []
+        for config in configs:
+            should_exclude = False
+            
+            for pattern in expanded_exclude_patterns:
+                # For exact file matches
+                if pattern == config.path:
+                    should_exclude = True
+                    logger.debug(f"Excluding path (exact match): {config.path}")
+                    break
+                    
+                # For glob matches
+                elif '*' in pattern:
+                    if fnmatch.fnmatch(config.path, pattern):
+                        should_exclude = True
+                        logger.debug(f"Excluding path (pattern match): {config.path}")
+                        break
+                        
+                # For directory matches (exclude all files in directory)
+                elif os.path.isdir(pattern) and config.path.startswith(pattern + '/'):
+                    should_exclude = True
+                    logger.debug(f"Excluding path (directory child): {config.path}")
+                    break
+            
+            if not should_exclude:
+                filtered_configs.append(config)
+        
+        return filtered_configs
+    
     def update_system_state(self, include_desktop=True, 
                            desktop_environments=None, exclude_desktop=None,
-                           include_fstab_portability=True, include_repos=True, test_mode=False) -> None:
-        """Update the system state with current packages and configuration files
+                           include_paths=None, exclude_paths=None,
+                           include_fstab_portability=True, include_repos=True,
+                           test_mode=False) -> None:
+        """Update the system state by scanning for packages and configuration files
         
         Args:
             include_desktop: Whether to include desktop environment configs
             desktop_environments: List of specific desktop environments to include
             exclude_desktop: List of desktop environments to exclude
-            include_fstab_portability: Whether to include portable fstab entries
+            include_paths: List of additional paths to include in the config scan
+            exclude_paths: List of paths to exclude from the config scan
+            include_fstab_portability: Whether to process fstab for portable entries
             include_repos: Whether to include software repositories
-            test_mode: If True, run in test mode with limited package scanning
+            test_mode: Whether to run in test mode (reduced package scanning)
         """
-        # Scan packages
-        packages = self.scan_packages(test_mode=test_mode)
-        
-        # Set fstab portability flag in system config tracker
+        # Update fstab portability setting
         self.system_config_tracker.include_fstab_portability = include_fstab_portability
-        logger.info(f"Setting fstab portability to: {include_fstab_portability}")
         
-        self.state["packages"] = [pkg.to_dict() for pkg in packages]
+        # Update system variables to ensure they're current
+        self.system_variables.update()
         
-        # Scan configuration files
-        config_files = self.scan_config_files(
+        # Scan for installed packages
+        logger.info("Scanning for installed packages...")
+        self.installed_packages = self.scan_packages(test_mode=test_mode)
+        logger.info(f"Found {len(self.installed_packages)} installed packages")
+        
+        # Scan for configuration files
+        logger.info("Scanning for configuration files...")
+        self.config_files = self.scan_config_files(
             include_desktop=include_desktop,
             desktop_environments=desktop_environments,
-            exclude_desktop=exclude_desktop
+            exclude_desktop=exclude_desktop,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths
         )
+        logger.info(f"Found {len(self.config_files)} configuration files")
         
-        # Convert configs to dicts with extra data for special cases
-        config_dicts = []
-        fstab_found = False
-        
-        for cfg in config_files:
-            cfg_dict = cfg.to_dict()
-            
-            # Add fstab data if available
-            if cfg.path == "/etc/fstab.portable" and hasattr(cfg, 'fstab_data'):
-                cfg_dict["fstab_data"] = cfg.fstab_data
-                fstab_found = True
-                logger.info(f"Found and added fstab portable data to backup")
-                
-            config_dicts.append(cfg_dict)
-        
-        if not fstab_found:
-            logger.warning("No portable fstab data found in configuration files")
-            # Check if the system tracker has fstab entries
-            if hasattr(self.system_config_tracker, 'portable_fstab_entries'):
-                logger.info(f"System tracker has {len(self.system_config_tracker.portable_fstab_entries)} portable fstab entries")
-            
-            # Check if regular fstab was included 
-            regular_fstab = any(cfg.path == "/etc/fstab" for cfg in config_files)
-            logger.info(f"Regular fstab included: {regular_fstab}")
-        
-        self.state["config_files"] = config_dicts
-        
-        # Scan and add software repositories if enabled
+        # Scan for software repositories if enabled
         if include_repos:
-            repo_manager = RepositoryManager()
-            repositories = repo_manager.scan_repositories()
-            logger.info(f"Found {len(repositories)} custom software repositories")
-            if repositories:
-                self.state["repositories"] = repo_manager.export_repositories()
-                logger.info("Added software repositories to system state")
+            logger.info("Scanning for software repositories...")
+            self.repo_sources = self.scan_repo_sources()
+            logger.info(f"Found {len(self.repo_sources['repositories'])} repository sources")
         else:
             logger.info("Software repository scanning disabled")
-            # Remove repositories from state if they exist
-            if "repositories" in self.state:
-                del self.state["repositories"]
+            self.repo_sources = []
         
-        # Save state
+        # Update last scan time
+        self.last_scan_time = datetime.datetime.now()
+        
+        # Save system state to disk
         self._save_state()
+        
+        logger.info("System state updated successfully")
     
-    def backup_state(self, backup_dir: Optional[str] = None) -> str:
-        """Backup the current system state to a specified directory
+    def backup_state(self, backup_dir: Optional[str] = None) -> Optional[str]:
+        """Backup the current system state to a file
         
         Args:
-            backup_dir: Path to the backup directory, or None to use the configured directory
-        
+            backup_dir: Directory to store the backup file, or None for default
+            
         Returns:
-            Path to the created backup file, or empty string if failed
+            Path to the created backup file, or None if backup failed
         """
-        # Create a multi-progress tracker for the backup operation
-        multi_progress = MultiProgressTracker(overall_desc="System backup", overall_total=5)  # Updated total
-        multi_progress.start_overall()
+        if not backup_dir:
+            backup_dir = config.get_backup_dir()
         
+        # Make sure the backup directory exists
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # Generate a timestamp for the backup filename
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Check if any config files might have portability issues
+        config_paths = [cfg.path for cfg in self.config_files]
+        
+        # Get warnings from each config tracker
+        portability_warnings = {}
+        
+        # Check user config tracker for warnings
+        if hasattr(self.user_config_tracker, 'get_path_warnings'):
+            user_warnings = self.user_config_tracker.get_path_warnings(config_paths)
+            if user_warnings:
+                portability_warnings.update(user_warnings)
+        
+        # Display warnings to the user if any found
+        if portability_warnings:
+            print("\nPORTABILITY WARNINGS:")
+            print("----------------------")
+            print("The following paths in your backup may have portability issues:")
+            for path, warning in portability_warnings.items():
+                print(f"\n- {path}:")
+                print(f"  {warning}")
+            
+            print("\nDo you want to continue with the backup?")
+            choice = input("Continue? (y/n) [y]: ").strip().lower()
+            
+            if choice and choice not in ['y', 'yes']:
+                print("Backup cancelled.")
+                return None
+        
+        # Get hostname for organizing backups
+        hostname = platform.node() or "unknown"
+        
+        # Create host-specific directory
+        safe_hostname = ''.join(c if c.isalnum() or c in '-_' else '_' for c in hostname)
+        host_backup_dir = os.path.join(backup_dir, safe_hostname)
+        os.makedirs(host_backup_dir, exist_ok=True)
+        
+        # Create backup file in the host-specific directory
+        backup_file = os.path.join(host_backup_dir, f"migrator_backup_{timestamp}_{hostname}.json")
+        
+        # Create a config_files directory for storing actual configuration files
+        configs_dir = os.path.join(os.path.dirname(backup_file), "config_files")
+        os.makedirs(configs_dir, exist_ok=True)
+        
+        # Create a backup data structure
+        backup_data = {
+            "timestamp": timestamp,
+            "version": __version__,
+            "hostname": hostname,
+            "system_variables": self.system_variables.to_dict(),
+            "packages": [pkg.to_dict() for pkg in self.installed_packages],
+            "config_files": [],
+        }
+        
+        # Add repo sources if available
+        if self.repo_sources:
+            backup_data["repositories"] = self.repo_sources
+        
+        # Process config files
+        for cfg in self.config_files:
+            cfg_dict = cfg.to_dict()
+            
+            # Add special processing for certain config files
+            if cfg.path == "/etc/fstab.portable" and hasattr(cfg, 'fstab_data'):
+                cfg_dict["fstab_data"] = cfg.fstab_data
+            
+            backup_data["config_files"].append(cfg_dict)
+            
+            # Copy the actual config file to the backup directory
+            if os.path.exists(cfg.path) and os.path.isfile(cfg.path) and os.access(cfg.path, os.R_OK):
+                try:
+                    # Create subdirectories as needed
+                    target_path = os.path.join(configs_dir, cfg.path.lstrip('/'))
+                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                    
+                    # Copy the file
+                    shutil.copy2(cfg.path, target_path)
+                    logger.debug(f"Backed up config file: {cfg.path}")
+                except Exception as e:
+                    logger.warning(f"Failed to backup config file {cfg.path}: {e}")
+        
+        # Write the backup file
         try:
-            # Use configured backup directory if none is specified
-            if backup_dir is None:
-                backup_dir = config.get_backup_dir()
+            with open(backup_file, 'w') as f:
+                json.dump(backup_data, f, indent=2)
             
-            os.makedirs(backup_dir, exist_ok=True)
+            logger.info(f"System state backed up to {backup_file}")
             
-            # Get the hostname for organizing backups
-            hostname = self.system_variables.hostname
-            # Sanitize hostname for directory name (remove invalid characters)
-            safe_hostname = ''.join(c if c.isalnum() or c in '-_' else '_' for c in hostname)
-            
-            # Create a host-specific subdirectory for multi-system organization
-            host_backup_dir = os.path.join(backup_dir, safe_hostname)
-            os.makedirs(host_backup_dir, exist_ok=True)
-            
-            # Create a timestamped backup file with hostname
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = os.path.join(host_backup_dir, f"migrator_backup_{timestamp}_{safe_hostname}.json")
-            
-            multi_progress.update_overall(1, f"Starting backup to {host_backup_dir}")
-            
-            try:
-                # Add system variables to the state for portability
-                self.state["system_variables"] = self.system_variables.to_dict()
+            # Apply retention rules
+            deleted_count = self.cleanup_old_backups(host_backup_dir)
+            if deleted_count > 0:
+                logger.info(f"Removed {deleted_count} old backups based on retention policy")
                 
-                # Add enhanced metadata about the source machine
-                self.state["backup_metadata"] = {
-                    "hostname": self.system_variables.hostname,
-                    "distro_name": self.distro_info.name,
-                    "distro_version": self.distro_info.version,
-                    "distro_id": self.distro_info.id,
-                    "timestamp": timestamp,
-                    "backup_version": "1.3"  # Updated version of the backup format
-                }
-                
-                # Check for fstab data and ensure it's included
-                has_fstab_portable = False
-                for cfg in self.state.get("config_files", []):
-                    if cfg.get("path") == "/etc/fstab.portable" and "fstab_data" in cfg:
-                        has_fstab_portable = True
-                        logger.info(f"Verified fstab data is included in the backup")
-                        portable_entries = cfg.get("fstab_data", {}).get("portable_entries", [])
-                        logger.info(f"Backup includes {len(portable_entries)} portable fstab entries")
-                        break
-                
-                if not has_fstab_portable and self.system_config_tracker.has_portable_fstab_entries():
-                    logger.warning("Portable fstab entries exist but are not included in the backup")
-                    # Attempt to fix this by adding them directly
-                    for cfg_idx, cfg in enumerate(self.state.get("config_files", [])):
-                        if cfg.get("path") == "/etc/fstab.portable":
-                            if not "fstab_data" in cfg:
-                                fstab_manager = self.system_config_tracker.get_fstab_manager()
-                                if fstab_manager:
-                                    self.state["config_files"][cfg_idx]["fstab_data"] = fstab_manager.to_dict()
-                                    logger.info("Added missing fstab data to backup")
-                
-                # Check if repositories data is included
-                has_repositories = "repositories" in self.state
-                if not has_repositories:
-                    # Try to add repositories
-                    repo_manager = RepositoryManager()
-                    repositories = repo_manager.scan_repositories()
-                    if repositories:
-                        self.state["repositories"] = repo_manager.export_repositories()
-                        logger.info(f"Added {len(repositories)} software repositories to backup")
-                else:
-                    repo_count = len(self.state.get("repositories", {}).get("repositories", []))
-                    logger.info(f"Backup includes {repo_count} software repositories")
-                
-                # Write the state file
-                with open(backup_file, 'w') as f:
-                    json.dump(self.state, f, indent=2)
-                
-                logger.info(f"Backed up system state to {backup_file}")
-                multi_progress.update_overall(1, "System state saved")
-                
-                # Create a directory for config files
-                configs_dir = os.path.join(host_backup_dir, "config_files")
-                os.makedirs(configs_dir, exist_ok=True)
-                
-                # Create tracker for config file copying
-                config_files = self.state.get("config_files", [])
-                config_tracker = multi_progress.create_tracker(
-                    "config_copy", 
-                    OperationType.BACKUP,
-                    total=len(config_files),
-                    desc="Copying configuration files",
-                    unit="files"
-                )
-                multi_progress.activate_tracker("config_copy")
-                config_tracker.start()
-                
-                # Copy all config files
-                config_count = 0
-                for i, config_file in enumerate(config_files):
-                    path = config_file["path"]
-                    if os.path.exists(path) and os.access(path, os.R_OK):
-                        # Create relative path structure
-                        relative_path = path.lstrip("/")
-                        target_dir = os.path.join(configs_dir, os.path.dirname(relative_path))
-                        os.makedirs(target_dir, exist_ok=True)
-                        
-                        # Copy the file
-                        target_path = os.path.join(configs_dir, relative_path)
-                        try:
-                            shutil.copy2(path, target_path)
-                            config_count += 1
-                            config_tracker.update(1, f"Copied {path}")
-                        except Exception as e:
-                            logger.error(f"Error copying config file {path}: {e}")
-                            config_tracker.update(1, f"Error copying {path}")
-                    else:
-                        config_tracker.update(1, f"Skipped {path} (not readable)")
-                
-                logger.info(f"Backed up {config_count} configuration files to {configs_dir}")
-                multi_progress.close_tracker("config_copy", f"Copied {config_count} configuration files")
-                multi_progress.update_overall(1, "Configuration files backed up")
-                
-                # Create a directory for repository config files if needed
-                if has_repositories or "repositories" in self.state:
-                    repos_info = self.state.get("repositories", {})
-                    repo_count = len(repos_info.get("repositories", []))
-                    if repo_count > 0:
-                        multi_progress.update_overall(1, f"Including {repo_count} software repositories")
-                        logger.info(f"Included {repo_count} software repositories in backup")
-                else:
-                    multi_progress.update_overall(1, "No custom repositories to backup")
-                
-                # Check if retention rules are enabled and cleanup old backups if needed
-                if config.get_backup_retention_enabled():
-                    deleted_count = self.cleanup_old_backups(host_backup_dir)
-                    if deleted_count > 0:
-                        logger.info(f"Cleaned up {deleted_count} old backups based on retention policy")
-                
-                multi_progress.update_overall(1, "Backup completed")
-                multi_progress.close_all("Backup process completed successfully")
-                return backup_file
-                
-            except Exception as e:
-                logger.error(f"Error during backup: {e}")
-                multi_progress.close_all("Backup process failed")
-                return ""
-                
+            return backup_file
         except Exception as e:
-            logger.error(f"Error during backup setup: {e}")
-            multi_progress.close_all("Backup setup failed")
-            return ""
-
+            logger.error(f"Error backing up system state: {e}")
+            return None
+    
     def cleanup_old_backups(self, backup_dir: str) -> int:
         """Clean up old backups based on retention policy
         
@@ -1366,6 +1481,7 @@ class Migrator:
             metadata = backup_data.get("backup_metadata", {})
             source_distro = metadata.get("distro_name", "Unknown")
             source_distro_id = metadata.get("distro_id", "unknown")
+            source_hostname = metadata.get("hostname", "unknown")
             backup_version = metadata.get("backup_version", "1.0")
             
             # Check compatibility with current system
@@ -1533,3 +1649,32 @@ class Migrator:
         except Exception as e:
             logger.error(f"Error generating dry run report: {e}")
             return report
+
+    def scan_repo_sources(self) -> Dict[str, Any]:
+        """Scan the system for software repository sources
+        
+        Returns:
+            Dictionary of repository information
+        """
+        logger.info("Scanning for software repositories...")
+        
+        try:
+            # Initialize the repository manager
+            repo_manager = RepositoryManager()
+            
+            # Scan for repositories
+            repos = repo_manager.scan_repositories()
+            
+            # Convert repositories to a dictionary for serialization
+            repo_dict = {
+                "repositories": [repo.to_dict() for repo in repos],
+                "distro_id": self.distro_info.id.lower(),
+                "distro_name": self.distro_info.name,
+                "distro_version": self.distro_info.version
+            }
+            
+            logger.info(f"Found {len(repos)} repository sources")
+            return repo_dict
+        except Exception as e:
+            logger.error(f"Error scanning repositories: {e}")
+            return {"repositories": [], "error": str(e)}

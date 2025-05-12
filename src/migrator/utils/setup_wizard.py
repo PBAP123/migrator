@@ -43,6 +43,8 @@ class SetupWizard:
             "include_desktop_configs": True,
             "include_fstab_portability": True,
             "include_repos": True,
+            "include_paths": [],
+            "exclude_paths": [],
             "schedule_backups": False,
             "backup_schedule": "daily",
             "backup_time": "03:00",
@@ -182,6 +184,58 @@ class SetupWizard:
                 "Include software repositories (APT, DNF, PPAs, etc.)?",
                 default=True
             )
+            
+            # Section 1.1: Custom Path Configuration
+            self._print_section("Custom Path Configuration")
+            print("You can specify additional paths to include or exclude from backups.\n")
+            
+            # Ask about including custom paths
+            include_custom_paths = self._get_yes_no(
+                "Would you like to specify custom paths to include in backups?",
+                default=False
+            )
+            
+            if include_custom_paths:
+                print("\nEnter paths separated by commas. You can use:")
+                print("- Absolute paths (e.g., /home/user/Documents/notes.txt)")
+                print("- Home directory paths (e.g., ~/projects/configs)")
+                print("- Glob patterns (e.g., ~/.config/app/*.conf)")
+                
+                include_paths_input = self._get_input(
+                    "\nPaths to include",
+                    default=""
+                )
+                
+                if include_paths_input:
+                    # Split by comma and strip whitespace
+                    self.user_config["include_paths"] = [
+                        path.strip() for path in include_paths_input.split(",") if path.strip()
+                    ]
+                    print(f"Added {len(self.user_config['include_paths'])} paths to include list")
+            
+            # Ask about excluding custom paths
+            exclude_custom_paths = self._get_yes_no(
+                "Would you like to specify paths to exclude from backups?",
+                default=False
+            )
+            
+            if exclude_custom_paths:
+                print("\nEnter paths separated by commas. You can use:")
+                print("- Absolute paths (e.g., /home/user/Downloads)")
+                print("- Home directory paths (e.g., ~/.local/share/Steam)")
+                print("- Glob patterns (e.g., ~/.config/chrome/*/Cache)")
+                
+                exclude_paths_input = self._get_input(
+                    "\nPaths to exclude",
+                    default=""
+                )
+                
+                if exclude_paths_input:
+                    # Split by comma and strip whitespace
+                    self.user_config["exclude_paths"] = [
+                        path.strip() for path in exclude_paths_input.split(",") if path.strip()
+                    ]
+                    print(f"Added {len(self.user_config['exclude_paths'])} paths to exclude list")
             
             # Section 2: Backup Destination
             self._print_section("Backup Destination")
@@ -367,6 +421,29 @@ class SetupWizard:
             print(f"• Include portable fstab entries: {'Yes' if self.user_config['include_fstab_portability'] else 'No'}")
             print(f"• Include software repositories: {'Yes' if self.user_config['include_repos'] else 'No'}")
             
+            # Show custom include/exclude paths
+            if self.user_config["include_paths"]:
+                if len(self.user_config["include_paths"]) <= 3:
+                    # Show all paths if there are just a few
+                    print(f"• Custom include paths: {', '.join(self.user_config['include_paths'])}")
+                else:
+                    # Show a summary for larger lists
+                    print(f"• Custom include paths: {len(self.user_config['include_paths'])} paths")
+                    for i, path in enumerate(self.user_config["include_paths"][:3]):
+                        print(f"  - {path}")
+                    print(f"  - ... and {len(self.user_config['include_paths']) - 3} more")
+
+            if self.user_config["exclude_paths"]:
+                if len(self.user_config["exclude_paths"]) <= 3:
+                    # Show all paths if there are just a few
+                    print(f"• Custom exclude paths: {', '.join(self.user_config['exclude_paths'])}")
+                else:
+                    # Show a summary for larger lists
+                    print(f"• Custom exclude paths: {len(self.user_config['exclude_paths'])} paths")
+                    for i, path in enumerate(self.user_config["exclude_paths"][:3]):
+                        print(f"  - {path}")
+                    print(f"  - ... and {len(self.user_config['exclude_paths']) - 3} more")
+            
             # Show retention settings
             if self.user_config["backup_retention"]["enabled"]:
                 retention_config = self.user_config["backup_retention"]
@@ -435,6 +512,10 @@ class SetupWizard:
         self.config.set("include_desktop_configs", self.user_config["include_desktop_configs"])
         self.config.set("include_fstab_portability", self.user_config["include_fstab_portability"])
         self.config.set("include_repos", self.user_config["include_repos"])
+        
+        # Save include/exclude paths
+        self.config.set("include_paths", self.user_config["include_paths"])
+        self.config.set("exclude_paths", self.user_config["exclude_paths"])
         
         # Save backup retention settings
         retention_config = self.user_config["backup_retention"]

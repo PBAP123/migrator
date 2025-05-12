@@ -64,6 +64,10 @@ def setup_argparse() -> argparse.ArgumentParser:
                            help='Comma-separated list of desktop environments to include (e.g., gnome,kde,i3)')
     scan_parser.add_argument('--exclude-desktop', 
                            help='Comma-separated list of desktop environments to exclude')
+    scan_parser.add_argument('--include-paths',
+                           help='Comma-separated list of additional paths to include in the config scan')
+    scan_parser.add_argument('--exclude-paths',
+                           help='Comma-separated list of paths to exclude from the config scan')
     scan_parser.add_argument('--test-mode', action='store_true',
                            help='Run in test mode with limited package scanning (for development/debugging)')
     scan_parser.add_argument('--skip-setup-check', action='store_true',
@@ -80,6 +84,10 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Comma-separated list of desktop environments to include (e.g., gnome,kde,i3)')
     backup_parser.add_argument('--exclude-desktop', 
                              help='Comma-separated list of desktop environments to exclude')
+    backup_parser.add_argument('--include-paths',
+                             help='Comma-separated list of additional paths to include in the config scan')
+    backup_parser.add_argument('--exclude-paths',
+                             help='Comma-separated list of paths to exclude from the config scan')
     backup_parser.add_argument('--no-path-variables', action='store_true',
                              help='Disable dynamic path variable substitution for improved portability (enabled by default)')
     backup_parser.add_argument('--no-fstab-portability', action='store_true',
@@ -88,6 +96,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Skip scanning and backing up software repositories (included by default)')
     backup_parser.add_argument('--skip-setup-check', action='store_true',
                              help='Skip the first-run setup wizard check')
+    backup_parser.add_argument('--minimal', action='store_true',
+                             help='Create a minimal backup with only essential preferences (no application data)')
     
     # Restore command
     restore_parser = subparsers.add_parser('restore', help='Restore system state from backup')
@@ -270,11 +280,10 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
             setup_args = argparse.Namespace()
             handle_setup(app, setup_args)
     
-    # Process desktop environment options
-    include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
+    # Process desktop environment options - default is now TRUE (include desktop)
+    include_desktop = not args.no_desktop if hasattr(args, 'no_desktop') else True
     desktop_envs = None
     exclude_desktop = None
-    test_mode = args.test_mode if hasattr(args, 'test_mode') else False
     
     if hasattr(args, 'desktop_environments') and args.desktop_environments:
         desktop_envs = args.desktop_environments.split(',')
@@ -282,33 +291,55 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
     if hasattr(args, 'exclude_desktop') and args.exclude_desktop:
         exclude_desktop = args.exclude_desktop.split(',')
     
-    # Process repository backup option
+    # Process include/exclude paths
+    include_paths = None
+    exclude_paths = None
+    
+    if hasattr(args, 'include_paths') and args.include_paths:
+        include_paths = args.include_paths.split(',')
+    
+    if hasattr(args, 'exclude_paths') and args.exclude_paths:
+        exclude_paths = args.exclude_paths.split(',')
+    
+    # Handle repository backup option
     include_repos = not args.no_repo_backup if hasattr(args, 'no_repo_backup') else True
     
-    print("Scanning system for packages and configuration files...")
+    # For test mode (used for development/debugging)
+    test_mode = args.test_mode if hasattr(args, 'test_mode') else False
     
-    if include_desktop:
-        print("Including desktop environment configurations")
-        if desktop_envs:
-            print(f"Specific environments: {', '.join(desktop_envs)}")
-        if exclude_desktop:
-            print(f"Excluding environments: {', '.join(exclude_desktop)}")
+    # Scan packages
+    packages = app.scan_packages(test_mode=test_mode)
+    print(f"Found {len(packages)} installed packages")
     
-    if not include_repos:
-        print("Skipping software repository backup")
+    # Scan configuration files
+    configs = app.scan_config_files(
+        include_desktop=include_desktop,
+        desktop_environments=desktop_envs,
+        exclude_desktop=exclude_desktop,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths
+    )
+    print(f"Found {len(configs)} configuration files")
     
-    if test_mode:
-        print("WARNING: Using TEST MODE - only scanning a limited number of packages")
+    # Scan repositories if not disabled
+    if include_repos:
+        repo_data = app.scan_repo_sources()
+        repos = repo_data.get("repositories", [])
+        print(f"Found {len(repos)} repository sources")
     
+    # Update the system state
     app.update_system_state(
         include_desktop=include_desktop,
         desktop_environments=desktop_envs,
         exclude_desktop=exclude_desktop,
-        include_repos=include_repos,
-        test_mode=test_mode
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
+        include_fstab_portability=True,
+        include_repos=include_repos
     )
     
-    print("System state updated successfully.")
+    print("System scan complete. Run 'migrator backup' to create a backup.")
+    
     return 0
 
 def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
@@ -344,6 +375,34 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     if hasattr(args, 'exclude_desktop') and args.exclude_desktop:
         exclude_desktop = args.exclude_desktop.split(',')
     
+    # Process include/exclude paths
+    include_paths = None
+    exclude_paths = None
+    
+    if hasattr(args, 'include_paths') and args.include_paths:
+        include_paths = args.include_paths.split(',')
+        print(f"Including additional user-specified paths: {args.include_paths}")
+    
+    if hasattr(args, 'exclude_paths') and args.exclude_paths:
+        exclude_paths = args.exclude_paths.split(',')
+        print(f"Excluding user-specified paths: {args.exclude_paths}")
+    
+    # Check for minimal backup mode
+    if hasattr(args, 'minimal') and args.minimal:
+        print("Creating minimal backup with essential preferences only")
+        # Add essential directories to exclude_paths to create a minimal backup
+        minimal_excludes = [
+            "~/.local/share",
+            "~/.mozilla",
+            "~/.thunderbird",
+            "~/.cache",
+            "~/.var",
+        ]
+        if exclude_paths:
+            exclude_paths.extend(minimal_excludes)
+        else:
+            exclude_paths = minimal_excludes
+    
     # Handle path variables option
     use_path_variables = not args.no_path_variables if hasattr(args, 'no_path_variables') else True
     if not use_path_variables:
@@ -364,6 +423,8 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
         include_desktop=include_desktop,
         desktop_environments=desktop_envs,
         exclude_desktop=exclude_desktop,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
         include_fstab_portability=include_fstab_portability,
         include_repos=include_repos
     )
@@ -845,7 +906,7 @@ def handle_service(app: Migrator, args: argparse.Namespace) -> int:
     
     try:
         while True:
-            print(f"\n[{datetime.now().isoformat()}] Performing routine check...")
+            print(f"\n[{datetime.datetime.now().isoformat()}] Performing routine check...")
             changed_packages, changed_configs = app.execute_routine_check()
             
             # Print summary if changes detected
@@ -1011,7 +1072,7 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
         
         for i, backup_file in enumerate(backups, 1):
             # Get basic file info
-            mod_time = datetime.fromtimestamp(os.path.getmtime(backup_file))
+            mod_time = datetime.datetime.fromtimestamp(os.path.getmtime(backup_file))
             size = os.path.getsize(backup_file)
             size_str = f"{size/1024/1024:.1f}MB" if size > 1024*1024 else f"{size/1024:.1f}KB"
             
@@ -1249,7 +1310,9 @@ def handle_setup(app: Migrator, args: argparse.Namespace) -> int:
                 app.update_system_state(
                     include_desktop=config.get("include_desktop_configs", True),
                     include_fstab_portability=config.get("include_fstab_portability", True),
-                    include_repos=config.get("include_repos", True)
+                    include_repos=config.get("include_repos", True),
+                    include_paths=config.get("include_paths"),
+                    exclude_paths=config.get("exclude_paths")
                 )
                 print("System state updated successfully.")
         return 0
@@ -1352,7 +1415,7 @@ def _display_backups(app: Migrator, backup_files: List[str], show_detail: bool =
     """
     for i, backup_file in enumerate(backup_files, 1):
         # Get basic file info
-        mod_time = datetime.fromtimestamp(os.path.getmtime(backup_file))
+        mod_time = datetime.datetime.fromtimestamp(os.path.getmtime(backup_file))
         size = os.path.getsize(backup_file)
         size_str = f"{size/1024/1024:.1f}MB" if size > 1024*1024 else f"{size/1024:.1f}KB"
         

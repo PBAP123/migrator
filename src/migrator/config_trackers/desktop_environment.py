@@ -215,13 +215,18 @@ class DesktopEnvironmentTracker(ConfigTracker):
     def find_config_files(self, 
                           include_desktop: bool = True, 
                           desktop_environments: Optional[List[str]] = None,
-                          exclude_desktop: Optional[List[str]] = None) -> List[ConfigFile]:
+                          exclude_desktop: Optional[List[str]] = None,
+                          exclude_paths: Optional[List[str]] = None) -> List[ConfigFile]:
         """Find desktop environment configuration files to track
         
         Args:
             include_desktop: Whether to include desktop environment configs at all
             desktop_environments: Specific environments to include, or None for all detected
             exclude_desktop: Environments to exclude
+            exclude_paths: List of paths to exclude
+            
+        Returns:
+            List of configuration files
         """
         if not include_desktop:
             logger.info("Desktop environment tracking disabled")

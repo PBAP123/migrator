@@ -49,6 +49,29 @@ class SystemVariables:
         
         logger.info(f"Initialized system variables: username={self.username}, hostname={self.hostname}")
     
+    def update(self) -> None:
+        """Update system variables with current values
+        
+        This refreshes the username, hostname, and home directory to ensure
+        they're up-to-date with the current system state.
+        """
+        # Get the latest system information
+        self.username = getpass.getuser()
+        self.hostname = socket.gethostname()
+        self.home_dir = os.path.expanduser("~")
+        
+        # Update the placeholders
+        self.placeholders.update({
+            "USERNAME": self.username,
+            "HOSTNAME": self.hostname,
+            "HOME": self.home_dir,
+        })
+        
+        # Recompile patterns with updated values
+        self._compile_patterns()
+        
+        logger.debug(f"Updated system variables: username={self.username}, hostname={self.hostname}")
+    
     def _compile_patterns(self) -> None:
         """Compile regex patterns for variable detection"""
         # Create regex patterns for each variable

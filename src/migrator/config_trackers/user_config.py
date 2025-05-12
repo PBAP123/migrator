@@ -29,6 +29,84 @@ class UserConfigTracker(ConfigTracker):
             self.home_dir  # For dot files
         ]
         
+        # Define allow/deny lists for ~/.local/share directories
+        # These are used to provide more granular control over what gets backed up
+        self.local_share_allowlist = [
+            "applications",  # Desktop entries
+            "fonts",         # User-installed fonts
+            "icons",         # User-installed icons
+            "themes",        # User-installed themes
+            "mime",          # Custom MIME type definitions
+            "keyrings",      # Password keyrings
+            "gnome-shell",   # GNOME Shell extensions and settings
+            "plasma",        # KDE Plasma customizations
+            "kwin",          # KWin scripts and settings
+            "cinnamon",      # Cinnamon desktop settings
+            "nemo",          # Nemo file manager settings
+            "nautilus",      # Nautilus scripts and extensions
+            "vlc",           # VLC media player config
+            "TelegramDesktop", # Telegram settings
+            "kscreen",       # KDE screen layouts
+            "evolution",     # Evolution mail client settings
+            "geary",         # Geary mail client settings
+            "fish",          # Fish shell completions and configs
+            "sounds",        # Custom notification sounds
+            "gvfs-metadata", # File manager metadata
+            "recently-used.xbel", # Recent documents
+            "user-places.xbel", # Bookmarked places
+        ]
+        
+        # Directories to explicitly deny even if they match a pattern
+        self.local_share_denylist = [
+            "Steam",         # Game installations (very large)
+            "Trash",         # Deleted files
+            "flatpak",       # Flatpak runtime data
+            "containers",    # Container images and data
+            "baloo",         # KDE file indexer data
+            "tracker",       # GNOME tracker database
+            "akonadi",       # KDE PIM storage service data
+            "webkit",        # Browser cache and data
+            "gstreamer-1.0", # Media cache
+            "gvfs-metadata", # GVFS metadata (can be large)
+        ]
+        
+        # Paths with potential portability warnings for users
+        self.warning_paths = {
+            "~/.local/share/keyrings": (
+                "WARNING: Keyring files are encrypted with your login password and may not be usable "
+                "on a different system if your password changes. Consider manually exporting sensitive "
+                "passwords through your password manager application instead."
+            ),
+            "~/.gnupg": (
+                "WARNING: GPG keys may require additional setup after restore, including setting correct "
+                "permissions and ensuring you have the correct passphrases."
+            ),
+            "~/.mozilla": (
+                "WARNING: Full Mozilla/Firefox profile backups can be very large and may contain "
+                "cached content. Consider using Firefox Sync instead for profile migration."
+            ),
+            "~/.thunderbird": (
+                "WARNING: Email client profiles may contain large amounts of data if emails are stored locally. "
+                "Consider using IMAP for email access instead of backing up local mail stores."
+            ),
+            "~/.config/chromium": (
+                "WARNING: Chromium/Chrome profiles can be very large and contain cached data. "
+                "Consider using Chrome Sync instead for profile migration."
+            ),
+            "~/.docker": (
+                "WARNING: Docker configuration may include authentication tokens that are machine-specific. "
+                "You may need to re-authenticate after restore."
+            ),
+            "~/.config/pulse": (
+                "WARNING: PulseAudio configuration is often tied to specific hardware. "
+                "These settings may not work correctly on a different system."
+            ),
+            "~/.ssh": (
+                "WARNING: SSH keys should have correct permissions (0600) set after restore. "
+                "Ensure that private keys remain secure during the backup/restore process."
+            )
+        }
+        
         # Common important user configuration files to track
         self.important_configs = [
             # Shell and terminal
@@ -90,11 +168,42 @@ class UserConfigTracker(ConfigTracker):
             "~/.ssh/config",
             
             # Desktop files
-            "~/.local/share/applications/*.desktop"
+            "~/.local/share/applications/*.desktop",
+            
+            # Local share directories - NEW
+            "~/.local/share/fonts/*",
+            "~/.local/share/icons/*",
+            "~/.local/share/themes/*",
+            "~/.local/share/mime/*",
+            "~/.local/share/keyrings/*",
+            
+            # User scripts - NEW
+            "~/bin/*",
+            "~/.local/bin/*",
+            
+            # Application specific directories - NEW
+            "~/.mozilla/*",
+            "~/.thunderbird/*",
+            "~/.gnupg/*",
+            "~/.cups/*",
+            "~/.docker/config.json",
+            
+            # User systemd units - NEW
+            "~/.config/systemd/user/*.service",
+            "~/.config/systemd/user/*.timer",
+            "~/.config/systemd/user/*.target"
         ]
     
-    def find_config_files(self) -> List[ConfigFile]:
-        """Find user configuration files to track"""
+    def find_config_files(self, include_paths=None, exclude_paths=None) -> List[ConfigFile]:
+        """Find user configuration files to track
+        
+        Args:
+            include_paths: List of additional paths to include
+            exclude_paths: List of paths to exclude
+            
+        Returns:
+            List of found configuration files
+        """
         config_files = []
         
         # Expand globs and find files
@@ -148,18 +257,70 @@ class UserConfigTracker(ConfigTracker):
                                 config_files.append(config)
                                 self.tracked_files[config.path] = config
         
+        # Selectively scan .local/share based on allowlist
+        local_share_dir = os.path.join(self.home_dir, ".local/share")
+        if os.path.isdir(local_share_dir):
+            # Check each directory in the allowlist
+            for allowed_dir in self.local_share_allowlist:
+                dir_path = os.path.join(local_share_dir, allowed_dir)
+                
+                # Skip if in denylist or doesn't exist
+                if (allowed_dir in self.local_share_denylist or 
+                    not os.path.exists(dir_path)):
+                    continue
+                    
+                # For files, just add them directly
+                if os.path.isfile(dir_path) and os.access(dir_path, os.R_OK):
+                    config = self._create_config_file(dir_path)
+                    if config and config.path not in self.tracked_files:
+                        config_files.append(config)
+                        self.tracked_files[config.path] = config
+                # For directories, scan them for config files
+                elif os.path.isdir(dir_path):
+                    for subfile in self._find_config_files_in_dir(dir_path):
+                        if subfile.path not in self.tracked_files:
+                            config_files.append(subfile)
+                            self.tracked_files[subfile.path] = subfile
+        
         # Also scan for all dot files in home directory that look like configs
         for item in os.listdir(self.home_dir):
             if item.startswith(".") and not item.startswith(".."):
                 item_path = os.path.join(self.home_dir, item)
                 # Skip directories like .cache, .local, etc.
                 if os.path.isfile(item_path) and os.access(item_path, os.R_OK):
-                    # Skip known non-config dot files and directories
+                    # Skip known non-config dot files
                     if item not in [".bash_history", ".lesshst", ".viminfo", ".python_history", ".wget-hsts", ".xsession-errors"]:
                         config = self._create_config_file(item_path)
                         if config and config.path not in self.tracked_files:
                             config_files.append(config)
                             self.tracked_files[config.path] = config
+        
+        # Process additional include paths if provided
+        if include_paths:
+            for path in include_paths:
+                # Expand path and handle globs
+                expanded_path = os.path.expanduser(path)
+                
+                if '*' in expanded_path:
+                    # Handle glob patterns
+                    for matching_path in glob.glob(expanded_path):
+                        if os.path.isfile(matching_path) and os.access(matching_path, os.R_OK):
+                            config = self._create_config_file(matching_path)
+                            if config and config.path not in self.tracked_files:
+                                config_files.append(config)
+                                self.tracked_files[config.path] = config
+                elif os.path.isfile(expanded_path) and os.access(expanded_path, os.R_OK):
+                    # Handle direct file paths
+                    config = self._create_config_file(expanded_path)
+                    if config and config.path not in self.tracked_files:
+                        config_files.append(config)
+                        self.tracked_files[config.path] = config
+                elif os.path.isdir(expanded_path):
+                    # Handle directories
+                    for subfile in self._find_config_files_in_dir(expanded_path):
+                        if subfile.path not in self.tracked_files:
+                            config_files.append(subfile)
+                            self.tracked_files[subfile.path] = subfile
         
         return config_files
     
@@ -295,4 +456,32 @@ class UserConfigTracker(ConfigTracker):
     def update_all(self) -> None:
         """Update checksums for all tracked files"""
         for config in self.tracked_files.values():
-            config.update() 
+            config.update()
+    
+    def get_path_warnings(self, paths: List[str]) -> Dict[str, str]:
+        """Get warnings for specific paths that may have portability issues
+        
+        Args:
+            paths: List of paths to check for warnings
+            
+        Returns:
+            Dictionary mapping paths to warning messages
+        """
+        warnings = {}
+        
+        for path in paths:
+            # Expand the path to compare with warning patterns
+            expanded_path = os.path.expanduser(path)
+            
+            # Check against warning patterns
+            for warning_pattern, warning_message in self.warning_paths.items():
+                # Expand the warning pattern
+                expanded_warning = os.path.expanduser(warning_pattern)
+                
+                # If path exactly matches or is a subdirectory of the warning pattern
+                if expanded_path == expanded_warning or (
+                    os.path.isdir(expanded_warning) and
+                    expanded_path.startswith(expanded_warning + '/')
+                ):
+                    warnings[path] = warning_message
+                    break 

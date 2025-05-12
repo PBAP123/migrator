@@ -76,8 +76,15 @@ class SystemConfigTracker(ConfigTracker):
             "/etc/cron.monthly/*"
         ]
     
-    def find_config_files(self) -> List[ConfigFile]:
-        """Find system configuration files to track"""
+    def find_config_files(self, exclude_paths=None) -> List[ConfigFile]:
+        """Find system configuration files to track
+        
+        Args:
+            exclude_paths: List of paths to exclude
+            
+        Returns:
+            List of found configuration files
+        """
         config_files = []
         
         # Handle fstab specially for portability
