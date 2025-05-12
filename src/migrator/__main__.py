@@ -187,8 +187,35 @@ def setup_argparse() -> argparse.ArgumentParser:
     
     # Set backup directory command
     set_backup_dir_parser = config_subparsers.add_parser('set-backup-dir', 
-                                                      help='Set the backup directory')
-    set_backup_dir_parser.add_argument('backup_dir', help='Path to the backup directory')
+                                                       help='Set the default backup directory')
+    set_backup_dir_parser.add_argument('backup_dir', help='Path to backup directory')
+    
+    # Backup retention commands
+    retention_group = config_subparsers.add_parser('backup-retention', 
+                                                help='Configure backup retention rules')
+    retention_subparsers = retention_group.add_subparsers(dest='retention_command', help='Retention command')
+    
+    # Get backup retention settings
+    get_retention_parser = retention_subparsers.add_parser('get', 
+                                                        help='Show current backup retention settings')
+    
+    # Enable backup retention
+    enable_retention_parser = retention_subparsers.add_parser('enable', 
+                                                          help='Enable backup retention')
+    
+    # Disable backup retention
+    disable_retention_parser = retention_subparsers.add_parser('disable', 
+                                                           help='Disable backup retention')
+    
+    # Set retention mode to count
+    set_count_retention_parser = retention_subparsers.add_parser('set-count', 
+                                                              help='Keep only the most recent N backups')
+    set_count_retention_parser.add_argument('count', type=int, help='Number of backups to keep')
+    
+    # Set retention mode to age
+    set_age_retention_parser = retention_subparsers.add_parser('set-age', 
+                                                            help='Keep backups newer than X days')
+    set_age_retention_parser.add_argument('days', type=int, help='Number of days to keep backups')
     
     # List hosts command
     list_hosts_parser = config_subparsers.add_parser('list-hosts',
@@ -836,6 +863,50 @@ def handle_config(app: Migrator, args: argparse.Namespace) -> int:
         
         return 0
             
+    elif args.subcommand == 'backup-retention':
+        if not hasattr(args, 'retention_command') or not args.retention_command:
+            print("Error: No retention command specified")
+            return 1
+        
+        if args.retention_command == 'get':
+            retention_settings = app.get_backup_retention_settings()
+            print("Current backup retention settings:")
+            for mode, details in retention_settings.items():
+                print(f"{mode}: {details}")
+            return 0
+        
+        elif args.retention_command == 'enable':
+            app.enable_backup_retention()
+            print("Backup retention enabled.")
+            return 0
+        
+        elif args.retention_command == 'disable':
+            app.disable_backup_retention()
+            print("Backup retention disabled.")
+            return 0
+        
+        elif args.retention_command == 'set-count':
+            if not hasattr(args, 'count') or not args.count:
+                print("Error: No count specified for set-count command")
+                return 1
+            
+            app.set_backup_retention_count(args.count)
+            print(f"Backup retention set to keep only the most recent {args.count} backups.")
+            return 0
+        
+        elif args.retention_command == 'set-age':
+            if not hasattr(args, 'days') or not args.days:
+                print("Error: No days specified for set-age command")
+                return 1
+            
+            app.set_backup_retention_age(args.days)
+            print(f"Backup retention set to keep backups newer than {args.days} days.")
+            return 0
+        
+        else:
+            print(f"Unknown retention command: {args.retention_command}")
+            return 1
+    
     else:
         print(f"Unknown configuration subcommand: {args.subcommand}")
         return 1

@@ -519,6 +519,13 @@ migrator restore ~/backups/migrator_backup_20230101_120000.json --execute
 # Restore without transforming paths (keep them as-is from the source system)
 migrator restore ~/backups/migrator_backup_20230101_120000.json --execute --no-path-transform
 
+# Configure backup retention rules to manage storage space
+migrator config backup-retention get  # Show current retention settings
+migrator config backup-retention enable  # Enable automatic backup cleanup
+migrator config backup-retention disable  # Disable automatic backup cleanup
+migrator config backup-retention set-count 5  # Keep only the last 5 backups
+migrator config backup-retention set-age 30  # Keep backups newer than 30 days
+
 # Preview path transformations without actually making changes
 migrator restore ~/backups/migrator_backup_20230101_120000.json --path-transform-preview
 
@@ -774,7 +781,8 @@ Migrator includes an interactive CLI setup wizard to help you quickly configure 
 
 1. **Backup Content Configuration**: Choose what types of data to include in backups (desktop environments, fstab entries)
 2. **Backup Destination**: Select where your backups should be stored
-3. **Backup Scheduling**: Optionally set up automated backups on a schedule
+3. **Backup Retention Rules**: Configure automated cleanup of old backups to manage storage space
+4. **Backup Scheduling**: Optionally set up automated backups on a schedule
 
 To run the setup wizard:
 
@@ -785,6 +793,31 @@ migrator setup
 The wizard will be automatically triggered on the first run of Migrator, but you can run it any time to reconfigure your settings.
 
 Setup options are saved to Migrator's configuration file (`~/.config/migrator/config.json`), and if you enable scheduled backups, a systemd service will be created for you automatically.
+
+### Backup Retention Rules
+
+Migrator's backup retention feature automatically cleans up old backups based on user-defined rules to manage storage space efficiently:
+
+```bash
+# Get current retention settings
+migrator config backup-retention get
+
+# Enable automatic cleanup of old backups
+migrator config backup-retention enable
+
+# Disable automatic cleanup (keep all backups)
+migrator config backup-retention disable
+
+# Count-based retention: Keep only the N most recent backups
+migrator config backup-retention set-count 5  # Keep the last 5 backups
+
+# Age-based retention: Delete backups older than X days
+migrator config backup-retention set-age 30  # Keep backups newer than 30 days
+```
+
+When retention is enabled, Migrator automatically applies the cleanup rules after each new backup is created, ensuring your backup storage is kept manageable without requiring manual intervention.
+
+During the setup wizard, you'll be guided through configuring these retention settings in a user-friendly way.
 
 ### Multi-System Backup Organization
 

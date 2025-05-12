@@ -56,7 +56,13 @@ class Config:
         
         # Create default configuration
         default_config = {
-            "backup_dir": DEFAULT_BACKUP_DIR
+            "backup_dir": DEFAULT_BACKUP_DIR,
+            "backup_retention": {
+                "enabled": False,
+                "mode": "count",  # "count" or "age"
+                "count": 5,      # Keep last N backups
+                "age_days": 30    # Keep backups for N days
+            }
         }
         
         # Save default config
@@ -107,6 +113,85 @@ class Config:
             return False
             
         self.config["backup_dir"] = backup_dir
+        return self._save_config(self.config)
+    
+    def get_backup_retention_enabled(self) -> bool:
+        """Get whether backup retention is enabled
+        
+        Returns:
+            Whether backup retention is enabled
+        """
+        retention_config = self.config.get("backup_retention", {})
+        return retention_config.get("enabled", False)
+    
+    def get_backup_retention_mode(self) -> str:
+        """Get the backup retention mode
+        
+        Returns:
+            Retention mode ('count' or 'age')
+        """
+        retention_config = self.config.get("backup_retention", {})
+        return retention_config.get("mode", "count")
+    
+    def get_backup_retention_count(self) -> int:
+        """Get the number of backups to keep when using count-based retention
+        
+        Returns:
+            Number of backups to keep
+        """
+        retention_config = self.config.get("backup_retention", {})
+        return retention_config.get("count", 5)
+    
+    def get_backup_retention_age_days(self) -> int:
+        """Get the age in days to keep backups when using age-based retention
+        
+        Returns:
+            Number of days to keep backups
+        """
+        retention_config = self.config.get("backup_retention", {})
+        return retention_config.get("age_days", 30)
+    
+    def set_backup_retention(self, enabled: bool, mode: str = None, 
+                            count: int = None, age_days: int = None) -> bool:
+        """Set backup retention configuration
+        
+        Args:
+            enabled: Whether to enable backup retention
+            mode: Retention mode ('count' or 'age')
+            count: Number of backups to keep (for count mode)
+            age_days: Number of days to keep backups (for age mode)
+            
+        Returns:
+            Whether the operation was successful
+        """
+        if "backup_retention" not in self.config:
+            self.config["backup_retention"] = {
+                "enabled": False,
+                "mode": "count",
+                "count": 5,
+                "age_days": 30
+            }
+            
+        self.config["backup_retention"]["enabled"] = enabled
+        
+        if mode is not None:
+            if mode not in ["count", "age"]:
+                logger.error(f"Invalid retention mode: {mode}")
+                return False
+            self.config["backup_retention"]["mode"] = mode
+            
+        if count is not None:
+            if count < 1:
+                logger.error(f"Invalid retention count: {count}")
+                return False
+            self.config["backup_retention"]["count"] = count
+            
+        if age_days is not None:
+            if age_days < 1:
+                logger.error(f"Invalid retention age: {age_days}")
+                return False
+            self.config["backup_retention"]["age_days"] = age_days
+            
         return self._save_config(self.config)
 
 # Create singleton instance

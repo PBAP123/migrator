@@ -44,7 +44,13 @@ class SetupWizard:
             "include_fstab_portability": True,
             "schedule_backups": False,
             "backup_schedule": "daily",
-            "backup_time": "03:00"
+            "backup_time": "03:00",
+            "backup_retention": {
+                "enabled": config.get_backup_retention_enabled(),
+                "mode": config.get_backup_retention_mode(),
+                "count": config.get_backup_retention_count(),
+                "age_days": config.get_backup_retention_age_days()
+            }
         }
     
     def _get_input(self, prompt: str, default: Optional[str] = None) -> str:
@@ -68,37 +74,61 @@ class SetupWizard:
             return default
         return user_input
     
-    def _get_yes_no(self, prompt: str, default: Optional[bool] = None) -> bool:
-        """Get yes/no response from user
+    def _get_int_input(self, prompt: str, default: int, min_value: int, max_value: Optional[int] = None) -> int:
+        """Get integer input with validation
         
         Args:
             prompt: The prompt to display to the user
-            default: Default value (True=Yes, False=No, None=No default)
+            default: Default value to use if user enters nothing
+            min_value: Minimum acceptable value
+            max_value: Maximum acceptable value (optional)
             
         Returns:
-            True for Yes, False for No
+            Valid integer input
         """
-        if default is True:
-            options = "[Y/n]"
-        elif default is False:
-            options = "[y/N]"
-        else:
-            options = "[y/n]"
+        while True:
+            input_str = self._get_input(prompt, str(default))
             
-        full_prompt = f"{prompt} {options}: "
+            try:
+                value = int(input_str)
+                
+                if value < min_value:
+                    print(f"Error: Value must be at least {min_value}.")
+                    continue
+                    
+                if max_value is not None and value > max_value:
+                    print(f"Error: Value must not exceed {max_value}.")
+                    continue
+                    
+                return value
+            except ValueError:
+                print(f"Error: Please enter a valid integer.")
+    
+    def _get_yes_no(self, prompt: str, default: bool = False) -> bool:
+        """Get yes/no input with prompt
+        
+        Args:
+            prompt: The prompt to display to the user
+            default: Default value to use if user enters nothing
+            
+        Returns:
+            Boolean result (True for yes, False for no)
+        """
+        default_str = "y" if default else "n"
         
         while True:
+            full_prompt = f"{prompt} (y/n) [{default_str}]: "
             user_input = input(full_prompt).strip().lower()
             
-            if not user_input and default is not None:
+            if not user_input:
                 return default
                 
-            if user_input in ['y', 'yes']:
+            if user_input in ["y", "yes"]:
                 return True
-            elif user_input in ['n', 'no']:
+            elif user_input in ["n", "no"]:
                 return False
-                
-            print("Please enter 'y' or 'n'")
+            else:
+                print("Error: Please enter 'y' or 'n'.")
     
     def _print_header(self, title: str) -> None:
         """Print a formatted header
@@ -175,7 +205,44 @@ class SetupWizard:
                 except Exception as e:
                     print(f"Error: Could not create directory '{backup_dir}': {e}")
             
-            # Section 3: Scheduling
+            # Section 3: Backup Retention Rules
+            self._print_section("Backup Retention Rules")
+            print("Configure automatic cleanup of old backups to manage storage space.\n")
+            
+            # Ask about enabling backup retention
+            self.user_config["backup_retention"]["enabled"] = self._get_yes_no(
+                "Enable automatic cleanup of old backups?",
+                default=False
+            )
+            
+            if self.user_config["backup_retention"]["enabled"]:
+                # Ask about retention mode
+                print("\nSelect how to determine which backups to keep:")
+                print("1. Keep the most recent N backups")
+                print("2. Keep backups newer than X days")
+                
+                mode_choice = ""
+                while mode_choice not in ["1", "2"]:
+                    mode_choice = self._get_input("Select retention mode (1-2)", default="1")
+                
+                if mode_choice == "1":
+                    # Count-based retention
+                    self.user_config["backup_retention"]["mode"] = "count"
+                    self.user_config["backup_retention"]["count"] = self._get_int_input(
+                        "How many recent backups to keep?", 
+                        default=5, 
+                        min_value=1
+                    )
+                else:
+                    # Age-based retention
+                    self.user_config["backup_retention"]["mode"] = "age"
+                    self.user_config["backup_retention"]["age_days"] = self._get_int_input(
+                        "Keep backups newer than how many days?", 
+                        default=30, 
+                        min_value=1
+                    )
+            
+            # Section 4: Scheduling
             self._print_section("Backup Scheduling")
             print("Finally, let's configure automated backup scheduling.\n")
             
@@ -292,6 +359,17 @@ class SetupWizard:
             print(f"• Include desktop configurations: {'Yes' if self.user_config['include_desktop_configs'] else 'No'}")
             print(f"• Include portable fstab entries: {'Yes' if self.user_config['include_fstab_portability'] else 'No'}")
             
+            # Show retention settings
+            if self.user_config["backup_retention"]["enabled"]:
+                retention_config = self.user_config["backup_retention"]
+                if retention_config["mode"] == "count":
+                    print(f"• Backup retention: Keep the last {retention_config['count']} backups")
+                else:
+                    print(f"• Backup retention: Keep backups newer than {retention_config['age_days']} days")
+            else:
+                print("• Backup retention: Disabled (backups kept indefinitely)")
+            
+            # Show scheduling settings
             if self.user_config["schedule_backups"]:
                 if self.user_config["backup_schedule"] == "daily":
                     print(f"• Automated backups: Daily at {self.user_config['backup_time']}")
@@ -348,6 +426,15 @@ class SetupWizard:
         # Save other configuration values
         self.config.set("include_desktop_configs", self.user_config["include_desktop_configs"])
         self.config.set("include_fstab_portability", self.user_config["include_fstab_portability"])
+        
+        # Save backup retention settings
+        retention_config = self.user_config["backup_retention"]
+        self.config.set_backup_retention(
+            enabled=retention_config["enabled"],
+            mode=retention_config["mode"],
+            count=retention_config["count"],
+            age_days=retention_config["age_days"]
+        )
         
         # Setup systemd service if enabled
         if self.user_config["schedule_backups"]:

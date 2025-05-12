@@ -83,6 +83,12 @@ class SystemConfigTracker(ConfigTracker):
         # Handle fstab specially for portability
         if self.include_fstab_portability:
             self._process_fstab_entries()
+            
+            # Add the portable fstab file if it was created
+            portable_path = "/etc/fstab.portable"
+            if portable_path in self.tracked_files:
+                config_files.append(self.tracked_files[portable_path])
+                logger.info(f"Added portable fstab file to config files list")
         else:
             logger.info("Skipping portable fstab entries detection (disabled by user)")
             
@@ -119,6 +125,14 @@ class SystemConfigTracker(ConfigTracker):
                     if config:
                         config_files.append(config)
                         self.tracked_files[config.path] = config
+        
+        # Double-check portable fstab was included
+        if self.include_fstab_portability and self.portable_fstab_entries:
+            portable_path = "/etc/fstab.portable"
+            if not any(cfg.path == portable_path for cfg in config_files):
+                logger.warning(f"Portable fstab file was missing from return list, adding it now")
+                if portable_path in self.tracked_files:
+                    config_files.append(self.tracked_files[portable_path])
         
         return config_files
     
@@ -171,6 +185,10 @@ class SystemConfigTracker(ConfigTracker):
                 with open(temp_path, 'rb') as f:
                     file_contents = f.read()
                     config._calculate_checksum_from_data(file_contents)
+                
+                # Important: Set the fstab_data attribute explicitly
+                config.fstab_data = portable_fstab_data
+                logger.info(f"Set fstab_data on portable fstab config with {len(portable_fstab_data['portable_entries'])} entries")
                 
                 # Add to tracked files
                 self.tracked_files[portable_fstab_path] = config
