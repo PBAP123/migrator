@@ -1,0 +1,413 @@
+#!/usr/bin/env python3
+"""
+Setup Wizard for Migrator - Interactive CLI configuration
+
+This module provides an interactive setup wizard that guides users through
+the initial configuration of the Migrator tool.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
+
+import os
+import logging
+import getpass
+from typing import Dict, Any, Optional, List, Tuple
+
+from .config import config
+from .service import create_systemd_service, remove_systemd_service
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+class SetupWizard:
+    """Interactive CLI setup wizard for Migrator"""
+    
+    def __init__(self):
+        """Initialize the setup wizard"""
+        self.config = config
+        
+        # Default configuration values
+        self.user_config = {
+            "backup_dir": config.get_backup_dir(),
+            "include_desktop_configs": True,
+            "include_fstab_portability": True,
+            "schedule_backups": False,
+            "backup_schedule": "daily",
+            "backup_time": "03:00"
+        }
+    
+    def _get_input(self, prompt: str, default: Optional[str] = None) -> str:
+        """Get user input with prompt and optional default value
+        
+        Args:
+            prompt: The prompt to display to the user
+            default: Default value to use if user enters nothing
+            
+        Returns:
+            User input or default value
+        """
+        if default is not None:
+            full_prompt = f"{prompt} [{default}]: "
+        else:
+            full_prompt = f"{prompt}: "
+            
+        user_input = input(full_prompt).strip()
+        
+        if not user_input and default is not None:
+            return default
+        return user_input
+    
+    def _get_yes_no(self, prompt: str, default: Optional[bool] = None) -> bool:
+        """Get yes/no response from user
+        
+        Args:
+            prompt: The prompt to display to the user
+            default: Default value (True=Yes, False=No, None=No default)
+            
+        Returns:
+            True for Yes, False for No
+        """
+        if default is True:
+            options = "[Y/n]"
+        elif default is False:
+            options = "[y/N]"
+        else:
+            options = "[y/n]"
+            
+        full_prompt = f"{prompt} {options}: "
+        
+        while True:
+            user_input = input(full_prompt).strip().lower()
+            
+            if not user_input and default is not None:
+                return default
+                
+            if user_input in ['y', 'yes']:
+                return True
+            elif user_input in ['n', 'no']:
+                return False
+                
+            print("Please enter 'y' or 'n'")
+    
+    def _print_header(self, title: str) -> None:
+        """Print a formatted header
+        
+        Args:
+            title: Title of the header
+        """
+        print("\n" + "=" * 60)
+        print(f"  {title}")
+        print("=" * 60 + "\n")
+    
+    def _print_section(self, title: str) -> None:
+        """Print a formatted section title
+        
+        Args:
+            title: Title of the section
+        """
+        print(f"\n--- {title} ---")
+    
+    def run_wizard(self) -> Dict[str, Any]:
+        """Run the interactive setup wizard
+        
+        Returns:
+            Dictionary of configuration options set by the user
+        """
+        self._print_header("Migrator Setup Wizard")
+        print("Welcome to the Migrator setup wizard.")
+        print("This wizard will guide you through the initial configuration of Migrator.")
+        print("Press Ctrl+C at any time to cancel the setup.\n")
+        
+        try:
+            # Section 1: Backup Content
+            self._print_section("Backup Content Configuration")
+            print("First, let's configure what content to include in your backups.\n")
+            
+            # Ask about desktop environment configurations
+            self.user_config["include_desktop_configs"] = self._get_yes_no(
+                "Include desktop environment configurations?",
+                default=True
+            )
+            
+            # Ask about fstab entries
+            self.user_config["include_fstab_portability"] = self._get_yes_no(
+                "Include portable fstab entries (network shares)?",
+                default=True
+            )
+            
+            # Section 2: Backup Destination
+            self._print_section("Backup Destination")
+            print("Next, let's set the destination path for your backups.\n")
+            
+            # Get backup directory
+            default_backup_dir = self.user_config["backup_dir"]
+            while True:
+                backup_dir = self._get_input(
+                    "Enter path for backup storage",
+                    default=default_backup_dir
+                )
+                
+                # Expand user directory if needed
+                backup_dir = os.path.expanduser(backup_dir)
+                
+                # Validate the directory
+                try:
+                    # Try to create it if it doesn't exist
+                    os.makedirs(backup_dir, exist_ok=True)
+                    
+                    # Check if it's writable
+                    if os.access(backup_dir, os.W_OK):
+                        self.user_config["backup_dir"] = backup_dir
+                        break
+                    else:
+                        print(f"Error: Directory '{backup_dir}' is not writable.")
+                except Exception as e:
+                    print(f"Error: Could not create directory '{backup_dir}': {e}")
+            
+            # Section 3: Scheduling
+            self._print_section("Backup Scheduling")
+            print("Finally, let's configure automated backup scheduling.\n")
+            
+            # Ask about scheduling backups
+            self.user_config["schedule_backups"] = self._get_yes_no(
+                "Set up automated scheduled backups?",
+                default=False
+            )
+            
+            if self.user_config["schedule_backups"]:
+                # Ask about schedule frequency
+                print("\nSelect backup frequency:")
+                print("1. Daily")
+                print("2. Weekly")
+                print("3. Monthly")
+                
+                while True:
+                    choice = self._get_input("Enter your choice (1-3)", default="1")
+                    
+                    if choice == "1":
+                        self.user_config["backup_schedule"] = "daily"
+                        
+                        # Ask for time
+                        while True:
+                            time_input = self._get_input(
+                                "Enter daily backup time (HH:MM, 24-hour format)",
+                                default="03:00"
+                            )
+                            
+                            # Validate time format
+                            if self._validate_time_format(time_input):
+                                self.user_config["backup_time"] = time_input
+                                break
+                            else:
+                                print("Error: Invalid time format. Please use HH:MM format (e.g., 03:00).")
+                        
+                        break
+                    elif choice == "2":
+                        self.user_config["backup_schedule"] = "weekly"
+                        
+                        # Ask for day of week
+                        print("\nSelect day of week:")
+                        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                        for i, day in enumerate(days, 1):
+                            print(f"{i}. {day}")
+                            
+                        while True:
+                            day_choice = self._get_input("Enter your choice (1-7)", default="1")
+                            
+                            try:
+                                day_idx = int(day_choice) - 1
+                                if 0 <= day_idx < len(days):
+                                    self.user_config["backup_day"] = days[day_idx]
+                                    break
+                                else:
+                                    print("Error: Please enter a number between 1 and 7.")
+                            except ValueError:
+                                print("Error: Please enter a number between 1 and 7.")
+                        
+                        # Ask for time
+                        while True:
+                            time_input = self._get_input(
+                                "Enter backup time (HH:MM, 24-hour format)",
+                                default="03:00"
+                            )
+                            
+                            # Validate time format
+                            if self._validate_time_format(time_input):
+                                self.user_config["backup_time"] = time_input
+                                break
+                            else:
+                                print("Error: Invalid time format. Please use HH:MM format (e.g., 03:00).")
+                        
+                        break
+                    elif choice == "3":
+                        self.user_config["backup_schedule"] = "monthly"
+                        
+                        # Ask for day of month
+                        while True:
+                            day_input = self._get_input("Enter day of month (1-28)", default="1")
+                            
+                            try:
+                                day = int(day_input)
+                                if 1 <= day <= 28:
+                                    self.user_config["backup_day"] = day
+                                    break
+                                else:
+                                    print("Error: Please enter a number between 1 and 28.")
+                            except ValueError:
+                                print("Error: Please enter a number between 1 and 28.")
+                        
+                        # Ask for time
+                        while True:
+                            time_input = self._get_input(
+                                "Enter backup time (HH:MM, 24-hour format)",
+                                default="03:00"
+                            )
+                            
+                            # Validate time format
+                            if self._validate_time_format(time_input):
+                                self.user_config["backup_time"] = time_input
+                                break
+                            else:
+                                print("Error: Invalid time format. Please use HH:MM format (e.g., 03:00).")
+                        
+                        break
+                    else:
+                        print("Error: Invalid choice. Please enter a number between 1 and 3.")
+            
+            # Confirm settings
+            self._print_section("Configuration Summary")
+            print("Please review your configuration:")
+            print(f"• Backup directory: {self.user_config['backup_dir']}")
+            print(f"• Include desktop configurations: {'Yes' if self.user_config['include_desktop_configs'] else 'No'}")
+            print(f"• Include portable fstab entries: {'Yes' if self.user_config['include_fstab_portability'] else 'No'}")
+            
+            if self.user_config["schedule_backups"]:
+                if self.user_config["backup_schedule"] == "daily":
+                    print(f"• Automated backups: Daily at {self.user_config['backup_time']}")
+                elif self.user_config["backup_schedule"] == "weekly":
+                    print(f"• Automated backups: Weekly on {self.user_config['backup_day']} at {self.user_config['backup_time']}")
+                elif self.user_config["backup_schedule"] == "monthly":
+                    print(f"• Automated backups: Monthly on day {self.user_config['backup_day']} at {self.user_config['backup_time']}")
+            else:
+                print("• Automated backups: Disabled")
+            
+            print("\nIs this configuration correct?")
+            confirm = self._get_yes_no("Save this configuration", default=True)
+            
+            if confirm:
+                # Save configuration
+                self._save_configuration()
+                
+                print("\nConfiguration saved successfully!")
+                return self.user_config
+            else:
+                print("\nSetup cancelled. No changes were made.")
+                return {}
+        except KeyboardInterrupt:
+            print("\n\nSetup cancelled. No changes were made.")
+            return {}
+    
+    def _validate_time_format(self, time_str: str) -> bool:
+        """Validate time format (HH:MM)
+        
+        Args:
+            time_str: Time string to validate
+            
+        Returns:
+            Whether the time format is valid
+        """
+        try:
+            hour, minute = time_str.split(":")
+            hour = int(hour)
+            minute = int(minute)
+            
+            return 0 <= hour < 24 and 0 <= minute < 60
+        except (ValueError, TypeError):
+            return False
+    
+    def _save_configuration(self) -> None:
+        """Save the configuration
+        
+        This method saves the user configuration to the config file
+        and sets up the systemd service if requested.
+        """
+        # Save backup directory
+        self.config.set_backup_dir(self.user_config["backup_dir"])
+        
+        # Save other configuration values
+        self.config.set("include_desktop_configs", self.user_config["include_desktop_configs"])
+        self.config.set("include_fstab_portability", self.user_config["include_fstab_portability"])
+        
+        # Setup systemd service if enabled
+        if self.user_config["schedule_backups"]:
+            # Set schedule configuration
+            self.config.set("schedule_backups", True)
+            self.config.set("backup_schedule", self.user_config["backup_schedule"])
+            self.config.set("backup_time", self.user_config["backup_time"])
+            
+            if "backup_day" in self.user_config:
+                self.config.set("backup_day", self.user_config["backup_day"])
+            
+            # Create the systemd service
+            self._setup_systemd_service()
+    
+    def _setup_systemd_service(self) -> None:
+        """Set up the systemd service based on user configuration
+        
+        This creates a systemd service and timer for automated backups
+        with the schedule defined by the user.
+        """
+        # Remove existing service if any (to avoid conflicts)
+        try:
+            remove_systemd_service(user_unit=True)
+        except Exception as e:
+            logger.warning(f"Failed to remove existing service: {e}")
+        
+        # Schedule string for systemd timer
+        schedule = ""
+        
+        if self.user_config["backup_schedule"] == "daily":
+            # Format: "OnCalendar=*-*-* HH:MM:00"
+            schedule = f"*-*-* {self.user_config['backup_time']}:00"
+        elif self.user_config["backup_schedule"] == "weekly":
+            # Format: "OnCalendar=Mon *-*-* HH:MM:00" (or the day specified)
+            day = self.user_config.get("backup_day", "Monday")[:3]  # First 3 letters
+            schedule = f"{day} *-*-* {self.user_config['backup_time']}:00"
+        elif self.user_config["backup_schedule"] == "monthly":
+            # Format: "OnCalendar=*-*-01 HH:MM:00" (or the day specified)
+            day = str(self.user_config.get("backup_day", 1)).zfill(2)
+            schedule = f"*-*-{day} {self.user_config['backup_time']}:00"
+        
+        # Create the systemd service with the custom schedule
+        try:
+            create_systemd_service(
+                user_unit=True,
+                schedule=schedule
+            )
+            logger.info(f"Created systemd service with schedule: {schedule}")
+        except Exception as e:
+            logger.error(f"Failed to create systemd service: {e}")
+            print(f"Error: Failed to create systemd service: {e}")
+
+
+# Create instance for easy access
+wizard = SetupWizard()
+
+def run_setup_wizard() -> Dict[str, Any]:
+    """Run the interactive setup wizard
+    
+    Returns:
+        Dictionary of configuration options set by the user
+    """
+    return wizard.run_wizard() 

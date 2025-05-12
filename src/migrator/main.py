@@ -1279,25 +1279,35 @@ class Migrator:
         return config.get_backup_dir()
 
     def is_first_run(self) -> bool:
-        """Determine if this appears to be a first run on a new system
+        """Check if this is the first run of Migrator
         
         Returns:
-            True if this appears to be a first-time run with no state file or config
+            True if no previous state or configuration exists
         """
-        # Check if the state file exists
-        if not os.path.exists(self.state_file):
-            return True
+        # Check if state file exists
+        state_exists = os.path.exists(self.state_file)
         
-        # Check if config directory exists
-        config_dir = os.path.expanduser("~/.config/migrator")
-        if not os.path.exists(config_dir):
-            return True
+        # Check if config file exists with non-default values
+        config_file = os.path.join(os.path.expanduser("~/.config/migrator"), "config.json")
+        config_exists = os.path.exists(config_file)
         
-        # Check if backup directory configuration exists
-        config_file = os.path.join(config_dir, "config.json")
-        if not os.path.exists(config_file):
+        # If neither exists, this is a first run
+        if not state_exists and not config_exists:
             return True
-        
+            
+        # If config exists but is empty/default, still consider it a first run
+        if not state_exists and config_exists:
+            try:
+                with open(config_file, 'r') as f:
+                    config_data = json.load(f)
+                
+                # If config only contains the default backup_dir, still consider it a first run
+                if len(config_data) == 1 and "backup_dir" in config_data:
+                    return True
+            except (json.JSONDecodeError, IOError):
+                # If config file exists but is invalid, consider it a first run
+                return True
+                
         return False
 
     def scan_for_backups(self, search_removable: bool = True, search_network: bool = False) -> List[str]:

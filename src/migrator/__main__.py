@@ -28,6 +28,7 @@ from typing import List, Dict, Any
 
 from .main import Migrator
 from .utils.service import create_systemd_service, remove_systemd_service
+from .utils.setup_wizard import run_setup_wizard
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ def setup_argparse() -> argparse.ArgumentParser:
               migrator compare backup.json # Compare current system with backup
               migrator plan backup.json   # Generate installation plan from backup
               migrator install-service    # Install as a systemd service
+              migrator setup              # Launch the interactive setup wizard
               migrator config get-backup-dir  # Display the current backup directory
               migrator config set-backup-dir PATH  # Set a new backup directory
         """)
@@ -64,6 +66,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                            help='Comma-separated list of desktop environments to exclude')
     scan_parser.add_argument('--test-mode', action='store_true',
                            help='Run in test mode with limited package scanning (for development/debugging)')
+    scan_parser.add_argument('--skip-setup-check', action='store_true',
+                           help='Skip the first-run setup wizard check')
     
     # Backup command
     backup_parser = subparsers.add_parser('backup', help='Backup system state')
@@ -78,6 +82,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Disable dynamic path variable substitution for improved portability')
     backup_parser.add_argument('--no-fstab-portability', action='store_true',
                              help='Disable selective backup of portable fstab entries')
+    backup_parser.add_argument('--skip-setup-check', action='store_true',
+                             help='Skip the first-run setup wizard check')
     
     # Restore command
     restore_parser = subparsers.add_parser('restore', help='Restore system state from backup')
@@ -90,6 +96,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Only restore config files, skip packages')
     restore_parser.add_argument('--dry-run', action='store_true',
                               help='Perform a dry run showing all changes that would be made without actually applying them')
+    restore_parser.add_argument('--skip-setup-check', action='store_true',
+                              help='Skip the first-run setup wizard check')
     # Version handling options
     version_group = restore_parser.add_argument_group('version handling')
     version_group.add_argument('--version-policy', type=str, default='prefer-newer',
@@ -190,10 +198,24 @@ def setup_argparse() -> argparse.ArgumentParser:
     locate_parser.add_argument('--output', '-o', 
                              help='Output file for found backup paths')
     
+    # Setup command
+    setup_parser = subparsers.add_parser('setup', help='Run the interactive setup wizard')
+    
     return parser
 
 def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
     """Handle scan command"""
+    # Check if this appears to be a first run on a new system
+    if app.is_first_run() and not args.skip_setup_check:
+        print("It appears this is the first time running Migrator.")
+        print("Would you like to run the setup wizard first to configure Migrator?")
+        choice = input("This will help you set up backup preferences (y/n): ")
+        
+        if choice.lower() in ['y', 'yes']:
+            # Create setup args and call handle_setup
+            setup_args = argparse.Namespace()
+            handle_setup(app, setup_args)
+    
     # Process desktop environment options
     include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
     desktop_envs = None
@@ -230,6 +252,17 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
 
 def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     """Handle backup command"""
+    # Check if this appears to be a first run on a new system
+    if app.is_first_run() and not args.skip_setup_check:
+        print("It appears this is the first time running Migrator.")
+        print("Would you like to run the setup wizard first to configure Migrator?")
+        choice = input("This will help you set up backup preferences (y/n): ")
+        
+        if choice.lower() in ['y', 'yes']:
+            # Create setup args and call handle_setup
+            setup_args = argparse.Namespace()
+            handle_setup(app, setup_args)
+    
     backup_dir = args.backup_dir
     
     if backup_dir is None:
@@ -283,7 +316,7 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
 def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     """Handle restore command"""
     # Check if this appears to be a first run on a new system
-    if app.is_first_run() and not hasattr(args, 'dry_run'):
+    if app.is_first_run() and not hasattr(args, 'dry_run') and not args.skip_setup_check:
         print("It appears this is the first time running Migrator on this system.")
         
         # Check if the specified backup file exists
@@ -292,9 +325,10 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
             print("\nWould you like to:")
             print("1. Scan for backup files on connected drives")
             print("2. Specify a different backup file path")
-            print("3. Cancel restore operation")
+            print("3. Run the setup wizard first")
+            print("4. Cancel restore operation")
             
-            choice = input("Enter your choice (1-3): ")
+            choice = input("Enter your choice (1-4): ")
             
             if choice == '1':
                 # Create locate_args and call handle_locate_backup
@@ -307,6 +341,17 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
                     args.backup_file = new_path
                 else:
                     print(f"File not found: {new_path}")
+                    return 1
+            elif choice == '3':
+                # Run the setup wizard first
+                setup_args = argparse.Namespace()
+                handle_setup(app, setup_args)
+                
+                # Continue with restore after setup if the file exists
+                if os.path.exists(args.backup_file):
+                    print(f"Continuing with restore from {args.backup_file}...")
+                else:
+                    print(f"The specified backup file does not exist: {args.backup_file}")
                     return 1
             else:
                 print("Restore operation cancelled.")
@@ -796,39 +841,88 @@ def handle_locate_backup(app: Migrator, args: argparse.Namespace) -> int:
     
     return 0
 
+def handle_setup(app: Migrator, args: argparse.Namespace) -> int:
+    """Handle setup command"""
+    print("Starting interactive setup wizard...")
+    
+    # Run the setup wizard
+    config = run_setup_wizard()
+    
+    if config:
+        # If wizard completed successfully
+        print("Setup complete. You can now use Migrator with the configured settings.")
+        
+        # Check if a first scan is needed
+        if app.is_first_run():
+            print("\nWould you like to perform an initial system scan now?")
+            choice = input("This will scan your system for packages and configuration files (y/n): ")
+            
+            if choice.lower() in ['y', 'yes']:
+                # Use the settings from the wizard
+                print("\nScanning system for packages and configuration files...")
+                app.update_system_state(
+                    include_desktop=config.get("include_desktop_configs", True),
+                    include_fstab_portability=config.get("include_fstab_portability", True)
+                )
+                print("System state updated successfully.")
+        return 0
+    else:
+        # If wizard was cancelled
+        print("Setup was cancelled. You can run 'migrator setup' anytime to configure Migrator.")
+        return 1
+
 def main() -> int:
-    """Main CLI entry point"""
+    """Main entry point for the application"""
     parser = setup_argparse()
     args = parser.parse_args()
     
-    if not args.command:
-        parser.print_help()
-        return 1
+    # Set up data directory
+    os.makedirs(os.path.expanduser("~/.local/share/migrator"), exist_ok=True)
     
-    # Initialize application
+    # Create Migrator instance
     app = Migrator()
     
-    # Handle commands
-    command_handlers = {
-        'scan': handle_scan,
-        'backup': handle_backup,
-        'restore': handle_restore,
-        'compare': handle_compare,
-        'plan': handle_plan,
-        'check': handle_check,
-        'service': handle_service,
-        'install-service': handle_install_service,
-        'remove-service': handle_remove_service,
-        'config': handle_config,
-        'locate-backup': handle_locate_backup
-    }
+    # If first run and no command specified, suggest the setup command
+    if app.is_first_run() and args.command is None:
+        print("It looks like this is your first time running Migrator.")
+        print("Would you like to run the setup wizard to configure Migrator?")
+        choice = input("(y/n): ")
+        
+        if choice.lower() in ['y', 'yes']:
+            # Run the setup wizard
+            return handle_setup(app, args)
+        else:
+            print("You can run 'migrator setup' anytime to configure Migrator.")
     
-    handler = command_handlers.get(args.command)
-    if handler:
-        return handler(app, args)
+    # Handle command
+    if args.command == 'scan':
+        return handle_scan(app, args)
+    elif args.command == 'backup':
+        return handle_backup(app, args)
+    elif args.command == 'restore':
+        return handle_restore(app, args)
+    elif args.command == 'compare':
+        return handle_compare(app, args)
+    elif args.command == 'plan':
+        return handle_plan(app, args)
+    elif args.command == 'check':
+        return handle_check(app, args)
+    elif args.command == 'service':
+        return handle_service(app, args)
+    elif args.command == 'install-service':
+        return handle_install_service(app, args)
+    elif args.command == 'remove-service':
+        return handle_remove_service(app, args)
+    elif args.command == 'config':
+        return handle_config(app, args)
+    elif args.command == 'locate-backup':
+        return handle_locate_backup(app, args)
+    elif args.command == 'setup':
+        return handle_setup(app, args)
     else:
-        print(f"Unknown command: {args.command}")
-        return 1
+        # Show help if no command specified
+        parser.print_help()
+        return 0
 
 if __name__ == "__main__":
     sys.exit(main()) 

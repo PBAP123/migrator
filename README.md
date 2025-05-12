@@ -757,3 +757,21 @@ A: When you run `./migrator-init.sh update`, the script:
 
 **Q: Can I have multiple installations of Migrator?**  
 A: Yes, but they'll share the same wrapper scripts. If you need multiple installations, consider using different virtual environment paths and running directly from the source directories.
+
+## Interactive Setup Wizard
+
+Migrator includes an interactive CLI setup wizard to help you quickly configure the essential settings. The wizard will guide you through:
+
+1. **Backup Content Configuration**: Choose what types of data to include in backups (desktop environments, fstab entries)
+2. **Backup Destination**: Select where your backups should be stored
+3. **Backup Scheduling**: Optionally set up automated backups on a schedule
+
+To run the setup wizard:
+
+```bash
+migrator setup
+```
+
+The wizard will be automatically triggered on the first run of Migrator, but you can run it any time to reconfigure your settings.
+
+Setup options are saved to Migrator's configuration file (`~/.config/migrator/config.json`), and if you enable scheduled backups, a systemd service will be created for you automatically.

@@ -220,9 +220,51 @@ check_system_packages() {
     fi
 }
 
+# First run check and setup wizard trigger
+check_first_run() {
+    STATE_FILE="$HOME/.local/share/migrator/system_state.json"
+    CONFIG_FILE="$HOME/.config/migrator/config.json"
+    
+    # Check if state file exists
+    if [ ! -f "$STATE_FILE" ] && [ ! -f "$CONFIG_FILE" ]; then
+        print_header "First Run Detected"
+        echo "It looks like this is your first time running Migrator."
+        echo "Would you like to run the interactive setup wizard to configure Migrator?"
+        read -p "This will help you set up backup content, destination, and scheduling (y/n): " choice
+        
+        if [[ $choice =~ ^[Yy] ]]; then
+            # Run the setup wizard
+            if [ -x "$WRAPPER_PATH" ]; then
+                "$WRAPPER_PATH" setup
+                return $?
+            else
+                # If wrapper not available, install first then run setup
+                install_migrator
+                if [ -x "$WRAPPER_PATH" ]; then
+                    "$WRAPPER_PATH" setup
+                    return $?
+                else
+                    print_error "Failed to run setup wizard. Please try again later."
+                    return 1
+                fi
+            fi
+        else
+            print_warning "Setup wizard skipped. You can run 'migrator setup' anytime to configure Migrator."
+            echo
+        fi
+    fi
+    
+    return 0
+}
+
 # Run Migrator command via the wrapper script
 run_migrator() {
     if [ -x "$WRAPPER_PATH" ]; then
+        # Check for first run
+        if [ "$1" != "setup" ]; then
+            check_first_run
+        fi
+        
         # If args provided, run the command
         if [ $# -gt 0 ]; then
             "$WRAPPER_PATH" "$@"
@@ -322,7 +364,8 @@ show_menu() {
         echo "4) compare        - Compare current system with a backup"
         echo "5) check          - Check for changes since last scan"
         echo "6) service        - Manage Migrator service"
-        echo "7) help           - Show detailed help"
+        echo "7) setup          - Run the interactive setup wizard"
+        echo "8) help           - Show detailed help"
         echo "q) quit           - Exit the menu"
         echo
         
@@ -353,7 +396,11 @@ show_menu() {
                 clear
                 run_migrator_command "service"
                 ;;
-            7|help)
+            7|setup)
+                clear
+                run_migrator_command "setup"
+                ;;
+            8|help)
                 clear
                 run_migrator_command "help"
                 ;;
