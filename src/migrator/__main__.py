@@ -68,6 +68,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                            help='Run in test mode with limited package scanning (for development/debugging)')
     scan_parser.add_argument('--skip-setup-check', action='store_true',
                            help='Skip the first-run setup wizard check')
+    scan_parser.add_argument('--no-repo-backup', action='store_true',
+                           help='Skip scanning and backing up software repositories')
     
     # Backup command
     backup_parser = subparsers.add_parser('backup', help='Backup system state')
@@ -82,6 +84,8 @@ def setup_argparse() -> argparse.ArgumentParser:
                              help='Disable dynamic path variable substitution for improved portability')
     backup_parser.add_argument('--no-fstab-portability', action='store_true',
                              help='Disable selective backup of portable fstab entries')
+    backup_parser.add_argument('--no-repo-backup', action='store_true',
+                             help='Skip scanning and backing up software repositories')
     backup_parser.add_argument('--skip-setup-check', action='store_true',
                              help='Skip the first-run setup wizard check')
     
@@ -122,6 +126,15 @@ def setup_argparse() -> argparse.ArgumentParser:
                            help='Skip restoration of portable fstab entries')
     fstab_group.add_argument('--preview-fstab', action='store_true',
                            help='Preview portable fstab entries without applying changes')
+    
+    # Repository options
+    repo_group = restore_parser.add_argument_group('repository handling')
+    repo_group.add_argument('--no-repo-restore', action='store_true',
+                          help='Skip restoration of software repositories')
+    repo_group.add_argument('--preview-repos', action='store_true',
+                          help='Preview repository restoration without applying changes')
+    repo_group.add_argument('--force-incompatible-repos', action='store_true',
+                          help='Attempt to restore incompatible repositories (may cause system issues)')
     
     # Compare command
     compare_parser = subparsers.add_parser('compare', help='Compare current system with backup')
@@ -278,6 +291,9 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
     if hasattr(args, 'exclude_desktop') and args.exclude_desktop:
         exclude_desktop = args.exclude_desktop.split(',')
     
+    # Process repository backup option
+    include_repos = not args.no_repo_backup if hasattr(args, 'no_repo_backup') else True
+    
     print("Scanning system for packages and configuration files...")
     
     if include_desktop:
@@ -287,6 +303,9 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
         if exclude_desktop:
             print(f"Excluding environments: {', '.join(exclude_desktop)}")
     
+    if not include_repos:
+        print("Skipping software repository backup")
+    
     if test_mode:
         print("WARNING: Using TEST MODE - only scanning a limited number of packages")
     
@@ -294,6 +313,7 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
         include_desktop=include_desktop,
         desktop_environments=desktop_envs,
         exclude_desktop=exclude_desktop,
+        include_repos=include_repos,
         test_mode=test_mode
     )
     
@@ -343,12 +363,18 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     if not include_fstab_portability:
         print("Portable fstab entries backup disabled")
     
+    # Handle repository backup option
+    include_repos = not args.no_repo_backup if hasattr(args, 'no_repo_backup') else True
+    if not include_repos:
+        print("Software repository backup disabled")
+    
     # Ensure state is up to date
     app.update_system_state(
         include_desktop=include_desktop,
         desktop_environments=desktop_envs,
         exclude_desktop=exclude_desktop,
-        include_fstab_portability=include_fstab_portability
+        include_fstab_portability=include_fstab_portability,
+        include_repos=include_repos
     )
     
     # Create backup
@@ -434,10 +460,10 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         
         # Package section
         print("PACKAGES:")
-        print(f"  • {report['packages']['to_install']} packages will be installed")
-        print(f"  • {report['packages']['unavailable']} packages are unavailable")
+        print(f"  • {report['packages'].get('to_install', 0)} packages will be installed")
+        print(f"  • {report['packages'].get('unavailable', 0)} packages are unavailable")
         
-        if report['packages']['installation_commands']:
+        if report['packages'].get('installation_commands', []):
             print("\nInstallation commands that would be executed:")
             for i, cmd in enumerate(report['packages']['installation_commands'][:5], 1):
                 print(f"  {i}. {cmd}")
@@ -446,10 +472,10 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         
         # Config files section
         print("\nCONFIGURATION FILES:")
-        print(f"  • {report['config_files']['to_restore']} configuration files will be restored")
-        print(f"  • {report['config_files']['conflicts']} configuration files have conflicts")
+        print(f"  • {report['config_files'].get('to_restore', 0)} configuration files will be restored")
+        print(f"  • {report['config_files'].get('conflicts', 0)} configuration files have conflicts")
         
-        if report['config_files']['paths']:
+        if report['config_files'].get('paths', []):
             print("\nSample of configuration files to be restored:")
             for path in report['config_files']['paths'][:5]:
                 print(f"  • {path}")
@@ -457,7 +483,7 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
                 print(f"  ... and {len(report['config_files']['paths']) - 5} more files")
         
         # Path transformations section
-        if report['path_transformations']:
+        if report.get('path_transformations', {}):
             print("\nPATH TRANSFORMATIONS:")
             print("The following path transformations would be applied:")
             for i, (src_path, tgt_path) in enumerate(list(report['path_transformations'].items())[:5], 1):
@@ -466,16 +492,34 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
                 print(f"  ... and {len(report['path_transformations']) - 5} more transformations")
         
         # Fstab entries section
-        if report['fstab_entries']:
+        if report.get('fstab_entries', []):
             print("\nFSTAB ENTRIES:")
             print("The following portable fstab entries would be appended:")
             for i, entry in enumerate(report['fstab_entries'][:5], 1):
                 print(f"  {i}. {entry}")
             if len(report['fstab_entries']) > 5:
                 print(f"  ... and {len(report['fstab_entries']) - 5} more entries")
+                
+        # Repository section
+        if report.get('repositories', {}).get('total', 0) > 0:
+            print("\nSOFTWARE REPOSITORIES:")
+            print(f"  • {report['repositories'].get('to_restore', 0)} repositories will be restored")
+            print(f"  • {report['repositories'].get('compatibility_issues', 0)} repositories have compatibility issues")
+            
+            if report['repositories'].get('repos', []):
+                print("\nRepositories to be restored:")
+                compatible_repos = [
+                    r for r in report['repositories']['repos'] 
+                    if not any(c['name'] == r['name'] and c['type'] == 'repository_compatibility' 
+                              for c in report.get('conflicts', []))
+                ]
+                for i, repo in enumerate(compatible_repos[:5], 1):
+                    print(f"  {i}. {repo['name']} ({repo['type']})")
+                if len(compatible_repos) > 5:
+                    print(f"  ... and {len(compatible_repos) - 5} more repositories")
         
         # Conflicts section
-        if report['conflicts']:
+        if report.get('conflicts', []):
             print("\nPOTENTIAL ISSUES AND CONFLICTS:")
             for i, conflict in enumerate(report['conflicts'], 1):
                 if conflict['type'] == 'package_unavailable':
@@ -484,6 +528,10 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
                     print(f"  {i}. Package '{conflict['name']}' would require downgrade from {conflict['available_version']} to {conflict['backup_version']}")
                 elif conflict['type'] == 'config_conflict':
                     print(f"  {i}. Config file '{conflict['path']}' has conflict: {conflict['status']}")
+                elif conflict['type'] == 'repository_compatibility':
+                    print(f"  {i}. Repository '{conflict['name']}' is incompatible: {conflict['reason']}")
+                elif conflict['type'] == 'system_compatibility':
+                    print(f"  {i}. {conflict['reason']}")
         
         # Ask for confirmation to proceed with actual restore
         print("\n===================================\n")
@@ -557,6 +605,67 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
             restore_fstab=restore_fstab,
             preview_fstab=preview_fstab
         )
+    
+    # Handle repository restoration if requested
+    restore_repos = not args.no_repo_restore if hasattr(args, 'no_repo_restore') else True
+    preview_repos = args.preview_repos if hasattr(args, 'preview_repos') else False
+    force_incompatible = args.force_incompatible_repos if hasattr(args, 'force_incompatible_repos') else False
+    
+    if (execute_plan or preview_repos) and restore_repos:
+        from migrator.utils.repositories import RepositoryManager
+        repo_manager = RepositoryManager()
+        
+        # Load backup file
+        try:
+            with open(args.backup_file, 'r') as f:
+                backup_data = json.load(f)
+                
+            # Check for repositories in backup
+            repos_info = backup_data.get("repositories", {})
+            repositories = repos_info.get("repositories", [])
+            
+            if repositories:
+                if preview_repos:
+                    print("\nPreview of repository restoration (no changes will be made):")
+                    
+                # Check repository compatibility
+                compatibility_issues = repo_manager.check_compatibility(repos_info)
+                
+                if compatibility_issues and not preview_repos:
+                    if force_incompatible:
+                        print(f"\nWARNING: Found {len(compatibility_issues)} incompatible repositories")
+                        print("Attempting to restore ALL repositories (--force-incompatible-repos was specified)")
+                    else:
+                        print(f"\nFound {len(compatibility_issues)} incompatible repositories")
+                        print("These incompatible repositories will be skipped (use --force-incompatible-repos to override)")
+                        for issue in compatibility_issues:
+                            print(f"  - {issue['name']}: {issue['issue']}")
+                
+                # Restore repositories
+                successes, issues = repo_manager.restore_repositories(
+                    repos_info, 
+                    dry_run=preview_repos
+                )
+                
+                if successes:
+                    if preview_repos:
+                        print("\nRepositories that would be restored:")
+                    else:
+                        print("\nSuccessfully restored repositories:")
+                    for success in successes:
+                        print(f"  - {success}")
+                
+                if issues:
+                    if preview_repos:
+                        print("\nIssues that would occur during repository restoration:")
+                    else:
+                        print("\nIssues encountered during repository restoration:")
+                    for issue in issues:
+                        print(f"  - {issue['message']}")
+            else:
+                print("\nNo custom repositories found in backup")
+        except Exception as e:
+            print(f"Error processing repositories: {e}")
     
     return 0
 
@@ -1049,7 +1158,8 @@ def handle_setup(app: Migrator, args: argparse.Namespace) -> int:
                 print("\nScanning system for packages and configuration files...")
                 app.update_system_state(
                     include_desktop=config.get("include_desktop_configs", True),
-                    include_fstab_portability=config.get("include_fstab_portability", True)
+                    include_fstab_portability=config.get("include_fstab_portability", True),
+                    include_repos=config.get("include_repos", True)
                 )
                 print("System state updated successfully.")
         return 0

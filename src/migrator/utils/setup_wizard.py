@@ -42,6 +42,7 @@ class SetupWizard:
             "backup_dir": config.get_backup_dir(),
             "include_desktop_configs": True,
             "include_fstab_portability": True,
+            "include_repos": True,
             "schedule_backups": False,
             "backup_schedule": "daily",
             "backup_time": "03:00",
@@ -173,6 +174,12 @@ class SetupWizard:
             # Ask about fstab entries
             self.user_config["include_fstab_portability"] = self._get_yes_no(
                 "Include portable fstab entries (network shares)?",
+                default=True
+            )
+            
+            # Ask about including software repositories
+            self.user_config["include_repos"] = self._get_yes_no(
+                "Include software repositories (APT, DNF, PPAs, etc.)?",
                 default=True
             )
             
@@ -358,6 +365,7 @@ class SetupWizard:
             print(f"• Backup directory: {self.user_config['backup_dir']}")
             print(f"• Include desktop configurations: {'Yes' if self.user_config['include_desktop_configs'] else 'No'}")
             print(f"• Include portable fstab entries: {'Yes' if self.user_config['include_fstab_portability'] else 'No'}")
+            print(f"• Include software repositories: {'Yes' if self.user_config['include_repos'] else 'No'}")
             
             # Show retention settings
             if self.user_config["backup_retention"]["enabled"]:
@@ -426,6 +434,7 @@ class SetupWizard:
         # Save other configuration values
         self.config.set("include_desktop_configs", self.user_config["include_desktop_configs"])
         self.config.set("include_fstab_portability", self.user_config["include_fstab_portability"])
+        self.config.set("include_repos", self.user_config["include_repos"])
         
         # Save backup retention settings
         retention_config = self.user_config["backup_retention"]

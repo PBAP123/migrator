@@ -22,7 +22,7 @@ import socket
 import logging
 import getpass
 import shutil
-from typing import Dict, List, Optional, Tuple, Any, Set
+from typing import Dict, List, Optional, Tuple, Any, Set, Pattern
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +242,66 @@ class SystemVariables:
             path_map[f"/home/{source_username}"] = f"/home/{target_username}"
         
         return path_map
+
+def count_replacements(sysvar: SystemVariables, content: str) -> int:
+    """Count the number of path replacements that would be made
+    
+    Args:
+        sysvar: SystemVariables object with source system variables
+        content: Content to check for replacements
+        
+    Returns:
+        Number of replacements that would be made
+    """
+    count = 0
+    
+    # Check for source system variables in content
+    for src, tgt in sysvar.source_to_target.items():
+        if src and tgt and src in content:
+            count += content.count(src)
+            
+    # Check for other placeholder patterns
+    for pattern in sysvar.patterns:
+        count += len(pattern.findall(content))
+            
+    return count
+
+def transform_content(sysvar: SystemVariables, content: str) -> Tuple[str, int]:
+    """Transform content by replacing source system paths
+    
+    Args:
+        sysvar: SystemVariables object with source system variables
+        content: Content to transform
+        
+    Returns:
+        Tuple of (transformed content, number of replacements made)
+    """
+    new_content = content
+    count = 0
+    
+    # Replace source system variables with target system variables
+    for src, tgt in sysvar.source_to_target.items():
+        if src and tgt and src in new_content:
+            replacements = new_content.count(src)
+            new_content = new_content.replace(src, tgt)
+            count += replacements
+    
+    # Replace patterns
+    for pattern in sysvar.patterns:
+        for match in pattern.finditer(content):
+            placeholder = match.group(1)
+            if placeholder in sysvar.placeholders:
+                replacement = sysvar.placeholders[placeholder]
+                # Replace this specific match
+                start, end = match.span(0)
+                before = new_content[:start]
+                after = new_content[end:]
+                matched_text = new_content[start:end]
+                new_text = matched_text.replace(match.group(0), replacement)
+                new_content = before + new_text + after
+                count += 1
+    
+    return new_content, count
 
 # Create singleton instance
 system_variables = SystemVariables() 

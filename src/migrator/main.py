@@ -43,6 +43,7 @@ from .utils.config import config
 from .utils.sysvar import system_variables, SystemVariables
 from .utils.fstab import FstabManager
 from .utils.progress import ProgressTracker, MultiProgressTracker, OperationType
+from .utils.repositories import RepositoryManager
 
 # Configure logging
 logging.basicConfig(
@@ -251,7 +252,7 @@ class Migrator:
     
     def update_system_state(self, include_desktop=True, 
                            desktop_environments=None, exclude_desktop=None,
-                           include_fstab_portability=True, test_mode=False) -> None:
+                           include_fstab_portability=True, include_repos=True, test_mode=False) -> None:
         """Update the system state with current packages and configuration files
         
         Args:
@@ -259,6 +260,7 @@ class Migrator:
             desktop_environments: List of specific desktop environments to include
             exclude_desktop: List of desktop environments to exclude
             include_fstab_portability: Whether to include portable fstab entries
+            include_repos: Whether to include software repositories
             test_mode: If True, run in test mode with limited package scanning
         """
         # Scan packages
@@ -304,6 +306,20 @@ class Migrator:
         
         self.state["config_files"] = config_dicts
         
+        # Scan and add software repositories if enabled
+        if include_repos:
+            repo_manager = RepositoryManager()
+            repositories = repo_manager.scan_repositories()
+            logger.info(f"Found {len(repositories)} custom software repositories")
+            if repositories:
+                self.state["repositories"] = repo_manager.export_repositories()
+                logger.info("Added software repositories to system state")
+        else:
+            logger.info("Software repository scanning disabled")
+            # Remove repositories from state if they exist
+            if "repositories" in self.state:
+                del self.state["repositories"]
+        
         # Save state
         self._save_state()
     
@@ -317,7 +333,7 @@ class Migrator:
             Path to the created backup file, or empty string if failed
         """
         # Create a multi-progress tracker for the backup operation
-        multi_progress = MultiProgressTracker(overall_desc="System backup", overall_total=4)
+        multi_progress = MultiProgressTracker(overall_desc="System backup", overall_total=5)  # Updated total
         multi_progress.start_overall()
         
         try:
@@ -353,7 +369,7 @@ class Migrator:
                     "distro_version": self.distro_info.version,
                     "distro_id": self.distro_info.id,
                     "timestamp": timestamp,
-                    "backup_version": "1.2"  # Updated version of the backup format
+                    "backup_version": "1.3"  # Updated version of the backup format
                 }
                 
                 # Check for fstab data and ensure it's included
@@ -376,6 +392,19 @@ class Migrator:
                                 if fstab_manager:
                                     self.state["config_files"][cfg_idx]["fstab_data"] = fstab_manager.to_dict()
                                     logger.info("Added missing fstab data to backup")
+                
+                # Check if repositories data is included
+                has_repositories = "repositories" in self.state
+                if not has_repositories:
+                    # Try to add repositories
+                    repo_manager = RepositoryManager()
+                    repositories = repo_manager.scan_repositories()
+                    if repositories:
+                        self.state["repositories"] = repo_manager.export_repositories()
+                        logger.info(f"Added {len(repositories)} software repositories to backup")
+                else:
+                    repo_count = len(self.state.get("repositories", {}).get("repositories", []))
+                    logger.info(f"Backup includes {repo_count} software repositories")
                 
                 # Write the state file
                 with open(backup_file, 'w') as f:
@@ -425,6 +454,16 @@ class Migrator:
                 logger.info(f"Backed up {config_count} configuration files to {configs_dir}")
                 multi_progress.close_tracker("config_copy", f"Copied {config_count} configuration files")
                 multi_progress.update_overall(1, "Configuration files backed up")
+                
+                # Create a directory for repository config files if needed
+                if has_repositories or "repositories" in self.state:
+                    repos_info = self.state.get("repositories", {})
+                    repo_count = len(repos_info.get("repositories", []))
+                    if repo_count > 0:
+                        multi_progress.update_overall(1, f"Including {repo_count} software repositories")
+                        logger.info(f"Included {repo_count} software repositories in backup")
+                else:
+                    multi_progress.update_overall(1, "No custom repositories to backup")
                 
                 # Check if retention rules are enabled and cleanup old backups if needed
                 if config.get_backup_retention_enabled():
@@ -808,33 +847,689 @@ class Migrator:
             return {"error": str(e)}
     
     def is_first_run(self) -> bool:
-        """Check if this is the first run of Migrator
+        """Check if this is the first run of the application
         
         Returns:
-            True if no previous state or configuration exists
+            True if this is the first run, False otherwise
         """
         # Check if state file exists
-        state_exists = os.path.exists(self.state_file)
-        
+        if not os.path.exists(self.state_file):
+            return True
+            
         # Check if config file exists with non-default values
-        config_file = os.path.join(os.path.expanduser("~/.config/migrator"), "config.json")
-        config_exists = os.path.exists(config_file)
-        
-        # If neither exists, this is a first run
-        if not state_exists and not config_exists:
+        user_config_file = os.path.expanduser("~/.config/migrator/config.json")
+        if not os.path.exists(user_config_file):
             return True
             
         # If config exists but is empty/default, still consider it a first run
-        if not state_exists and config_exists:
-            try:
-                with open(config_file, 'r') as f:
-                    config_data = json.load(f)
+        try:
+            with open(user_config_file, 'r') as f:
+                user_config = json.load(f)
                 
-                # If config only contains the default backup_dir, still consider it a first run
-                if len(config_data) == 1 and "backup_dir" in config_data:
-                    return True
-            except (json.JSONDecodeError, IOError):
-                # If config file exists but is invalid, consider it a first run
+            # If config only contains the default backup_dir, still consider it a first run
+            if len(user_config) == 1 and "backup_dir" in user_config:
                 return True
                 
-        return False
+            return False
+        except:
+            return True
+            
+    def restore_from_backup(self, backup_file: str, execute_plan: bool = False) -> bool:
+        """Restore system state from backup file
+        
+        Args:
+            backup_file: Path to the backup file
+            execute_plan: Whether to execute the installation plan
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Check if file exists
+            if not os.path.exists(backup_file):
+                logger.error(f"Backup file not found: {backup_file}")
+                return False
+                
+            # Load backup file
+            with open(backup_file, 'r') as f:
+                backup_data = json.load(f)
+                
+            # Extract metadata
+            metadata = backup_data.get("backup_metadata", {})
+            source_distro = metadata.get("distro_name", "Unknown")
+            source_distro_id = metadata.get("distro_id", "unknown")
+            source_hostname = metadata.get("hostname", "unknown")
+            backup_version = metadata.get("backup_version", "1.0")
+            
+            print(f"Loaded backup from {source_hostname} running {source_distro}")
+            logger.info(f"Backup version: {backup_version}, from {source_distro} ({source_distro_id})")
+            
+            # Check compatibility with current system
+            target_distro = self.distro_info.name
+            target_distro_id = self.distro_info.id
+            
+            if source_distro_id != target_distro_id:
+                print(f"Warning: Backup is from {source_distro}, but current system is {target_distro}")
+                print("Some configurations may not be compatible across different distributions.")
+                logger.warning(f"Cross-distribution restore: {source_distro_id} to {target_distro_id}")
+                
+            # Load packages from backup
+            packages = backup_data.get("packages", [])
+            logger.info(f"Found {len(packages)} packages in backup")
+            print(f"Found {len(packages)} packages in backup")
+            
+            # Group packages by manager
+            packages_by_manager = {}
+            for pkg in packages:
+                manager = pkg.get("source", "unknown")
+                if manager not in packages_by_manager:
+                    packages_by_manager[manager] = []
+                packages_by_manager[manager].append(pkg)
+                
+            # Report package manager counts
+            for manager, pkgs in packages_by_manager.items():
+                logger.info(f"  - {manager}: {len(pkgs)} packages")
+                manual_count = sum(1 for p in pkgs if p.get("manually_installed", False))
+                print(f"  - {manager}: {len(pkgs)} packages ({manual_count} manually installed)")
+                
+            # Load config files from backup
+            config_files = backup_data.get("config_files", [])
+            logger.info(f"Found {len(config_files)} configuration files in backup")
+            print(f"Found {len(config_files)} configuration files in backup")
+            
+            # Check for repositories in backup
+            repos_info = backup_data.get("repositories", {})
+            repositories = repos_info.get("repositories", [])
+            if repositories:
+                logger.info(f"Found {len(repositories)} software repositories in backup")
+                print(f"Found {len(repositories)} software repositories in backup")
+                
+                # Check repository compatibility
+                repo_manager = RepositoryManager()
+                compatibility_issues = repo_manager.check_compatibility(repos_info)
+                
+                if compatibility_issues:
+                    print(f"\nDetected {len(compatibility_issues)} repository compatibility issues:")
+                    for issue in compatibility_issues:
+                        print(f"  - {issue['name']}: {issue['issue']}")
+                        logger.warning(f"Repository compatibility issue: {issue['name']} - {issue['issue']}")
+                
+                compatible_repos = len(repositories) - len(compatibility_issues)
+                if compatible_repos > 0:
+                    print(f"{compatible_repos} repositories are compatible with your system")
+                
+            # If execute_plan is True, restore repositories immediately if available
+            if execute_plan and repositories:
+                print("\nRestoring compatible software repositories...")
+                repo_manager = RepositoryManager()
+                successes, issues = repo_manager.restore_repositories(repos_info, dry_run=False)
+                
+                # Print success messages
+                if successes:
+                    print("\nSuccessfully restored repositories:")
+                    for success in successes:
+                        print(f"  - {success}")
+                
+                # Print issues
+                if issues:
+                    print("\nIssues encountered during repository restoration:")
+                    for issue in issues:
+                        print(f"  - {issue['message']}")
+            
+            # Set the state from the backup data
+            self.state = backup_data
+            
+            # Update the current system info in the state
+            self.state["system_info"] = {
+                "distro_name": self.distro_info.name,
+                "distro_version": self.distro_info.version,
+                "distro_id": self.distro_info.id,
+                "last_updated": datetime.datetime.now().isoformat()
+            }
+            
+            # Save the state
+            self._save_state()
+            
+            logger.info("System state restored from backup")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error restoring from backup: {e}")
+            return False
+            
+    def execute_installation_plan(self, backup_file: str, version_policy: str = 'prefer-newer', 
+                                 allow_downgrade: bool = False) -> bool:
+        """Execute package installation plan from backup
+        
+        Args:
+            backup_file: Path to the backup file
+            version_policy: Policy for version selection
+            allow_downgrade: Whether to allow downgrading packages
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Check if file exists
+            if not os.path.exists(backup_file):
+                logger.error(f"Backup file not found: {backup_file}")
+                return False
+                
+            # Load backup file
+            with open(backup_file, 'r') as f:
+                backup_data = json.load(f)
+                
+            # Get manually installed packages only
+            packages = [p for p in backup_data.get("packages", []) 
+                        if p.get("manually_installed", False)]
+                        
+            if not packages:
+                logger.warning("No manually installed packages found in backup")
+                print("No manually installed packages found to install")
+                return True
+                
+            logger.info(f"Found {len(packages)} manually installed packages to restore")
+            print(f"Installing {len(packages)} manually installed packages...")
+            
+            # Group packages by manager for more efficient installation
+            packages_by_manager = {}
+            for pkg in packages:
+                manager = pkg.get("source", "unknown")
+                if manager not in packages_by_manager:
+                    packages_by_manager[manager] = []
+                packages_by_manager[manager].append(pkg)
+                
+            # Install packages for each manager
+            for manager_name, pkgs in packages_by_manager.items():
+                # Skip unknown package managers
+                if manager_name == "unknown":
+                    continue
+                    
+                # Find matching package manager
+                manager = None
+                for pm in self.package_managers:
+                    if pm.name == manager_name:
+                        manager = pm
+                        break
+                        
+                if not manager:
+                    logger.warning(f"Package manager '{manager_name}' not available on this system")
+                    print(f"Package manager '{manager_name}' not available - skipping {len(pkgs)} packages")
+                    continue
+                    
+                logger.info(f"Installing {len(pkgs)} packages with {manager_name}")
+                print(f"\nInstalling {len(pkgs)} packages with {manager_name}...")
+                
+                success_count = 0
+                for i, pkg in enumerate(pkgs):
+                    name = pkg.get("name", "")
+                    version = pkg.get("version", "")
+                    
+                    progress = (i + 1) / len(pkgs) * 100
+                    print(f"\r  Progress: {i+1}/{len(pkgs)} ({progress:.1f}%)   ", end="", flush=True)
+                    
+                    # Skip if already installed with same or newer version
+                    current_version = manager.get_installed_version(name)
+                    if current_version:
+                        if version_policy == 'prefer-newer' and current_version >= version:
+                            logger.info(f"Package {name} already installed with version {current_version}")
+                            success_count += 1
+                            continue
+                        elif version_policy == 'prefer-same' and current_version == version:
+                            logger.info(f"Package {name} already installed with exact version {version}")
+                            success_count += 1
+                            continue
+                        elif version_policy == 'always-newest':
+                            # Check if a newer version is available
+                            latest = manager.get_latest_version(name)
+                            if latest and latest > version:
+                                version = latest
+                                
+                    # Install the package
+                    if version and version_policy == 'exact':
+                        # Try to install the exact version
+                        if manager.is_version_available(name, version):
+                            success = manager.install_package(name, version)
+                        else:
+                            logger.warning(f"Exact version {version} not available for {name}")
+                            success = False
+                    else:
+                        # Install latest available version
+                        success = manager.install_package(name)
+                        
+                    if success:
+                        success_count += 1
+                        logger.info(f"Installed {name}")
+                    else:
+                        logger.error(f"Failed to install {name}")
+                        
+                print(f"\r  Installed {success_count}/{len(pkgs)} packages                ")
+                
+            logger.info("Package installation completed")
+            print("\nPackage installation completed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error executing installation plan: {e}")
+            return False
+            
+    def execute_config_restoration(self, backup_file: str, transform_paths: bool = True,
+                                  preview_only: bool = False, restore_fstab: bool = True,
+                                  preview_fstab: bool = False) -> bool:
+        """Execute configuration file restoration from backup
+        
+        Args:
+            backup_file: Path to the backup file
+            transform_paths: Whether to transform paths for the current system
+            preview_only: Whether to only preview transformations without applying
+            restore_fstab: Whether to restore portable fstab entries
+            preview_fstab: Whether to only preview fstab changes
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Check if file exists
+            if not os.path.exists(backup_file):
+                logger.error(f"Backup file not found: {backup_file}")
+                return False
+                
+            # Load backup file
+            with open(backup_file, 'r') as f:
+                backup_data = json.load(f)
+                
+            # Get config files
+            config_files = backup_data.get("config_files", [])
+            if not config_files:
+                logger.warning("No configuration files found in backup")
+                print("No configuration files found to restore")
+                return True
+                
+            logger.info(f"Found {len(config_files)} configuration files to restore")
+            print(f"Restoring {len(config_files)} configuration files...")
+            
+            # If transforming paths, set up the source system variables
+            if transform_paths:
+                source_vars = backup_data.get("system_variables", {})
+                if source_vars:
+                    # Create a SystemVariables instance from the backup
+                    from .utils.sysvar import SystemVariables
+                    source_sysvar = SystemVariables.from_dict(source_vars)
+                    
+                    # Log the mappings
+                    logger.info(f"Path transformations:")
+                    logger.info(f"  Source username: {source_vars.get('username')} -> {self.system_variables.username}")
+                    logger.info(f"  Source hostname: {source_vars.get('hostname')} -> {self.system_variables.hostname}")
+                    logger.info(f"  Source home dir: {source_vars.get('home_dir')} -> {self.system_variables.home_dir}")
+                else:
+                    transform_paths = False
+                    logger.warning("No system variables found in backup, path transformation disabled")
+                    
+            # Process fstab entries if needed
+            if restore_fstab or preview_fstab:
+                # Look for portable fstab config
+                fstab_config = None
+                for cfg in config_files:
+                    if cfg.get("path") == "/etc/fstab.portable" and "fstab_data" in cfg:
+                        fstab_config = cfg
+                        break
+                        
+                if fstab_config and "fstab_data" in fstab_config:
+                    fstab_data = fstab_config.get("fstab_data", {})
+                    portable_entries = fstab_data.get("portable_entries", [])
+                    
+                    if portable_entries:
+                        logger.info(f"Found {len(portable_entries)} portable fstab entries")
+                        print(f"\nFound {len(portable_entries)} portable fstab entries")
+                        
+                        if preview_fstab:
+                            print("\nPortable fstab entries (preview only):")
+                            for entry in portable_entries:
+                                print(f"  {entry}")
+                        elif restore_fstab:
+                            # Add portable entries to current fstab
+                            try:
+                                # First check if entries already exist
+                                with open("/etc/fstab", 'r') as f:
+                                    current_fstab = f.read()
+                                    
+                                # Add entries that don't already exist
+                                entries_to_add = []
+                                for entry in portable_entries:
+                                    if entry not in current_fstab:
+                                        entries_to_add.append(entry)
+                                
+                                if entries_to_add:
+                                    # Make backup of current fstab
+                                    backup_path = "/etc/fstab.migrator.bak"
+                                    shutil.copy2("/etc/fstab", backup_path)
+                                    
+                                    # Append entries
+                                    with open("/etc/fstab", 'a') as f:
+                                        f.write("\n# Added by Migrator restoration\n")
+                                        for entry in entries_to_add:
+                                            f.write(f"{entry}\n")
+                                            
+                                    print(f"Added {len(entries_to_add)} portable fstab entries")
+                                    print(f"Original fstab backed up to {backup_path}")
+                                else:
+                                    print("All portable fstab entries already exist in current fstab")
+                            except Exception as e:
+                                logger.error(f"Error restoring fstab entries: {e}")
+                                print(f"Error restoring fstab entries: {str(e)}")
+                else:
+                    logger.info("No portable fstab entries found in backup")
+                    
+            # Restore configuration files
+            configs_dir = os.path.join(os.path.dirname(backup_file), "config_files")
+            transformed_count = 0
+            restored_count = 0
+            
+            if os.path.exists(configs_dir):
+                for cfg in config_files:
+                    path = cfg.get("path", "")
+                    category = cfg.get("category", "")
+                    
+                    # Skip special cases
+                    if path == "/etc/fstab.portable":
+                        continue
+                        
+                    # Check if file exists in backup
+                    source_path = os.path.join(configs_dir, path.lstrip("/"))
+                    if not os.path.exists(source_path):
+                        logger.warning(f"Config file not found in backup: {path}")
+                        continue
+                        
+                    # Check if paths need to be transformed
+                    if transform_paths and category in ['user_config', 'desktop_config']:
+                        if preview_only:
+                            # Just show preview of transformations
+                            try:
+                                with open(source_path, 'r') as f:
+                                    content = f.read()
+                                    
+                                # Count replacements without modifying
+                                from .utils.sysvar import count_replacements
+                                num_replacements = count_replacements(source_sysvar, content)
+                                
+                                if num_replacements > 0:
+                                    transformed_count += 1
+                                    print(f"Would transform {num_replacements} paths in {path}")
+                            except Exception as e:
+                                logger.error(f"Error analyzing {path}: {e}")
+                        else:
+                            # Transform and restore
+                            try:
+                                # Create target directory if needed
+                                target_dir = os.path.dirname(path)
+                                os.makedirs(target_dir, exist_ok=True)
+                                
+                                # Read source file
+                                with open(source_path, 'r') as f:
+                                    content = f.read()
+                                    
+                                # Transform paths
+                                from .utils.sysvar import transform_content
+                                new_content, num_replacements = transform_content(source_sysvar, content)
+                                
+                                if num_replacements > 0:
+                                    transformed_count += 1
+                                    logger.info(f"Transformed {num_replacements} paths in {path}")
+                                    
+                                # Write to target path
+                                with open(path, 'w') as f:
+                                    f.write(new_content)
+                                    
+                                restored_count += 1
+                                logger.info(f"Restored config file: {path}")
+                            except Exception as e:
+                                logger.error(f"Error restoring {path}: {e}")
+                    else:
+                        # Direct restoration without transformation
+                        try:
+                            # Create target directory if needed
+                            target_dir = os.path.dirname(path)
+                            os.makedirs(target_dir, exist_ok=True)
+                            
+                            # Copy file
+                            shutil.copy2(source_path, path)
+                            
+                            restored_count += 1
+                            logger.info(f"Restored config file: {path}")
+                        except Exception as e:
+                            logger.error(f"Error restoring {path}: {e}")
+                
+                if preview_only and transformed_count > 0:
+                    print(f"\nWould transform paths in {transformed_count} config files")
+                    print("No files were modified (preview mode)")
+                elif transform_paths:
+                    print(f"\nTransformed paths in {transformed_count} config files")
+                    
+                print(f"Restored {restored_count} configuration files")
+            else:
+                logger.warning(f"Config files directory not found: {configs_dir}")
+                print(f"Config files directory not found: {configs_dir}")
+                print("Configuration files were loaded into state but not copied to system")
+            
+            logger.info("Configuration restoration completed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error executing config restoration: {e}")
+            return False
+    
+    def generate_dry_run_report(self, backup_file: str, version_policy: str = 'prefer-newer',
+                               allow_downgrade: bool = False, transform_paths: bool = True) -> Dict[str, Any]:
+        """Generate a dry run report for restore operation
+        
+        Args:
+            backup_file: Path to the backup file
+            version_policy: Policy for version selection
+            allow_downgrade: Whether to allow downgrading packages
+            transform_paths: Whether to transform paths
+            
+        Returns:
+            Dictionary with report information
+        """
+        report = {
+            "packages": {
+                "to_install": 0,
+                "unavailable": 0,
+                "installation_commands": []
+            },
+            "config_files": {
+                "to_restore": 0,
+                "conflicts": 0,
+                "paths": []
+            },
+            "path_transformations": {},
+            "fstab_entries": [],
+            "repositories": {
+                "to_restore": 0,
+                "compatibility_issues": 0,
+                "repos": []
+            },
+            "conflicts": []
+        }
+        
+        try:
+            # Check if file exists
+            if not os.path.exists(backup_file):
+                logger.error(f"Backup file not found: {backup_file}")
+                return report
+                
+            # Load backup file
+            with open(backup_file, 'r') as f:
+                backup_data = json.load(f)
+                
+            # Get metadata
+            metadata = backup_data.get("backup_metadata", {})
+            source_distro = metadata.get("distro_name", "Unknown")
+            source_distro_id = metadata.get("distro_id", "unknown")
+            backup_version = metadata.get("backup_version", "1.0")
+            
+            # Check compatibility with current system
+            if source_distro_id != self.distro_info.id:
+                report["conflicts"].append({
+                    "type": "system_compatibility",
+                    "name": "Distribution mismatch",
+                    "source": source_distro,
+                    "target": self.distro_info.name,
+                    "reason": f"Backup is from {source_distro}, but current system is {self.distro_info.name}"
+                })
+                
+            # Get manually installed packages only
+            packages = [p for p in backup_data.get("packages", []) 
+                        if p.get("manually_installed", False)]
+                        
+            report["packages"]["total"] = len(packages)
+            
+            # Check each package
+            for pkg in packages:
+                name = pkg.get("name", "")
+                version = pkg.get("version", "")
+                source = pkg.get("source", "unknown")
+                
+                # Find matching package manager
+                manager = None
+                for pm in self.package_managers:
+                    if pm.name == source:
+                        manager = pm
+                        break
+                        
+                if not manager:
+                    report["conflicts"].append({
+                        "type": "package_manager_unavailable",
+                        "name": source,
+                        "reason": f"Package manager '{source}' not available on this system"
+                    })
+                    continue
+                    
+                # Check if package is available
+                if not manager.is_package_available(name):
+                    report["packages"]["unavailable"] += 1
+                    report["conflicts"].append({
+                        "type": "package_unavailable",
+                        "name": name,
+                        "source": source,
+                        "reason": f"Package '{name}' not available in current repositories"
+                    })
+                    continue
+                    
+                # Check for version issues
+                current_version = manager.get_installed_version(name)
+                if current_version:
+                    if version_policy == 'exact' and current_version != version:
+                        # Check if exact version is available
+                        if not manager.is_version_available(name, version):
+                            report["conflicts"].append({
+                                "type": "version_unavailable",
+                                "name": name,
+                                "source": source,
+                                "backup_version": version,
+                                "available_version": current_version,
+                                "reason": f"Exact version {version} not available for {name}"
+                            })
+                            
+                    elif current_version > version and not allow_downgrade:
+                        report["conflicts"].append({
+                            "type": "version_downgrade_required",
+                            "name": name,
+                            "source": source,
+                            "backup_version": version,
+                            "available_version": current_version,
+                            "reason": f"Would require downgrade from {current_version} to {version}"
+                        })
+                else:
+                    # Package not installed, add to install list
+                    report["packages"]["to_install"] += 1
+                    report["packages"]["installation_commands"].append(
+                        f"Install {name} ({source}) version {version}"
+                    )
+                    
+            # Check configuration files
+            config_files = backup_data.get("config_files", [])
+            report["config_files"]["total"] = len(config_files)
+            
+            for cfg in config_files:
+                path = cfg.get("path", "")
+                report["config_files"]["to_restore"] += 1
+                report["config_files"]["paths"].append(path)
+                
+                # Check if file exists and would be overwritten
+                if os.path.exists(path):
+                    report["config_files"]["conflicts"] += 1
+                    report["conflicts"].append({
+                        "type": "config_conflict",
+                        "path": path,
+                        "status": "File already exists and would be overwritten"
+                    })
+                    
+            # If transforming paths, check path transformations
+            if transform_paths:
+                source_vars = backup_data.get("system_variables", {})
+                if source_vars:
+                    report["path_transformations"] = {
+                        source_vars.get("username", ""): self.system_variables.username,
+                        source_vars.get("hostname", ""): self.system_variables.hostname,
+                        source_vars.get("home_dir", ""): self.system_variables.home_dir
+                    }
+                    
+            # Check fstab entries
+            for cfg in config_files:
+                if cfg.get("path") == "/etc/fstab.portable" and "fstab_data" in cfg:
+                    fstab_data = cfg.get("fstab_data", {})
+                    portable_entries = fstab_data.get("portable_entries", [])
+                    
+                    if portable_entries:
+                        report["fstab_entries"] = portable_entries
+                        
+                        # Check for conflicts with current fstab
+                        try:
+                            with open("/etc/fstab", 'r') as f:
+                                current_fstab = f.read()
+                                
+                            for entry in portable_entries:
+                                if entry in current_fstab:
+                                    report["conflicts"].append({
+                                        "type": "fstab_conflict",
+                                        "entry": entry,
+                                        "status": "Entry already exists in fstab"
+                                    })
+                        except Exception:
+                            pass
+                            
+            # Check repositories
+            repos_info = backup_data.get("repositories", {})
+            repositories = repos_info.get("repositories", [])
+            if repositories:
+                report["repositories"]["total"] = len(repositories)
+                
+                # Check repository compatibility
+                repo_manager = RepositoryManager()
+                compatibility_issues = repo_manager.check_compatibility(repos_info)
+                
+                report["repositories"]["to_restore"] = len(repositories) - len(compatibility_issues)
+                report["repositories"]["compatibility_issues"] = len(compatibility_issues)
+                
+                for issue in compatibility_issues:
+                    report["conflicts"].append({
+                        "type": "repository_compatibility",
+                        "name": issue["name"],
+                        "repo_type": issue["repo_type"],
+                        "distro_type": issue["distro_type"],
+                        "reason": issue["issue"]
+                    })
+                    
+                for repo in repositories:
+                    report["repositories"]["repos"].append({
+                        "name": repo.get("name", ""),
+                        "type": repo.get("repo_type", ""),
+                        "distro": repo.get("distro_type", "")
+                    })
+                    
+            return report
+                
+        except Exception as e:
+            logger.error(f"Error generating dry run report: {e}")
+            return report

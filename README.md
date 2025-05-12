@@ -79,6 +79,38 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Detailed summaries upon completion
   - Graceful fallback when running in environments without visual progress support
 
+### Package Management
+- Scans system and backs up installed package information
+- Detects manually installed packages vs dependencies
+- Restores manually installed packages on a new system
+- Supports APT, DNF, Pacman, Flatpak, Snap, and AppImage
+- Restores compatible packages when switching Linux distributions
+- Intelligent version handling with configurable policies
+
+### Configuration Files
+- Identifies and backs up important system and user configuration files
+- Applies path transformations during restore to adapt to new user/hostname/paths
+- Includes desktop environment configurations for major desktop environments
+- Supports cross-distribution transfers where configurations are compatible
+
+### Filesystem Support
+- Special handling for fstab entries with automatic adaptation to new systems
+- Extracts portable mount information that can be safely transferred
+- Preserves UUIDs and mount points between systems
+- Automatic backup and restoration of mount options
+
+### Software Repositories
+- Backs up custom software repositories and sources (APT, DNF, PPAs, Flatpak remotes, etc.)
+- Restores compatible repositories when migrating
+- Provides conflict detection for repositories that aren't compatible across distributions
+- Supports multiple package managers' repository formats
+
+### Backup Management
+- Organizes backups by host for multi-system management
+- Retention policies to automatically manage backup storage
+- Timestamps and detailed metadata for all backups
+- Compatible with existing backup files created before this feature
+
 ## Quickstart Guide
 
 ### Simple Installation (Recommended)
@@ -857,3 +889,67 @@ backup_directory/
 ```
 
 This organization prevents file conflicts and makes it easy to find backups for a specific system.
+
+## Restore Options
+
+When restoring from a backup, Migrator provides several options to control the restoration process:
+
+```
+  --execute, -e         Automatically install packages and restore config files
+  --packages-only       Only install packages, skip config files
+  --configs-only        Only restore config files, skip packages
+  --dry-run             Perform a dry run showing all changes that would be made without actually applying them
+```
+
+### Version Handling Options
+
+```
+  --version-policy {exact,prefer-same,prefer-newer,always-newest}
+                        Package version policy: exact=only install exact versions, 
+                        prefer-same=try exact version first but allow newer if needed, 
+                        prefer-newer=prefer newer versions but allow downgrade if needed, 
+                        always-newest=always use newest available version
+  --allow-downgrade     Allow downgrading packages if newer versions are installed
+```
+
+### Path Handling Options
+
+```
+  --no-path-transform   Disable automatic transformation of paths in config files
+  --path-transform-preview
+                        Show what paths would be transformed without making changes
+```
+
+### Fstab Options
+
+```
+  --no-fstab-restore    Skip restoration of portable fstab entries
+  --preview-fstab       Preview portable fstab entries without applying changes
+```
+
+### Repository Options
+
+```
+  --no-repo-restore     Skip restoration of software repositories
+  --preview-repos       Preview repository restoration without applying changes
+  --force-incompatible-repos
+                        Attempt to restore incompatible repositories (may cause system issues)
+```
+
+### Dry Run Mode
+
+The `--dry-run` option for the restore command provides a comprehensive preview of all changes that would be made to your system without actually applying them:
+
+```bash
+migrator restore ~/backups/migrator_backup_20230101_120000.json --dry-run
+```
+
+This generates a detailed report showing:
+
+1. **Packages**: Lists packages that would be installed and any that are unavailable
+2. **Configuration Files**: Shows which config files would be restored and any potential conflicts
+3. **Path Transformations**: Previews how system-specific paths would be adapted
+4. **Fstab Entries**: Displays portable fstab entries that would be appended
+5. **Conflicts and Issues**: Highlights potential problems before they occur
+
+After reviewing the report, you'll be prompted to confirm if you want to proceed with the actual restore operation. This gives you a clear understanding of the impact before committing to any changes.
