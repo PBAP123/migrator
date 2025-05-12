@@ -26,15 +26,29 @@ import time
 from pathlib import Path
 from datetime import datetime
 
-# Add to requirements.txt
+# Check if we're running in a virtual environment
+IN_VENV = hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
+
+# Try to import required modules
 try:
     import py_cui
     import distro
-except ImportError:
-    print("Required dependencies not found. Installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "py_cui", "distro"])
-    import py_cui
-    import distro
+except ImportError as e:
+    # Only try to auto-install if we're in a virtual environment
+    if IN_VENV:
+        print(f"Required dependency not found: {e}")
+        print("Please run the unified installer script first:")
+        print("./migrator-init.sh tui")
+        sys.exit(1)
+    else:
+        print("Required dependencies not found and not in a virtual environment.")
+        print("Please run the unified installer script first:")
+        print("./migrator-init.sh tui")
+        print("\nOr manually set up a virtual environment:")
+        print("python3 -m venv ~/.venvs/migrator")
+        print("source ~/.venvs/migrator/bin/activate")
+        print("pip install py_cui distro")
+        sys.exit(1)
 
 # Import the config module
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -50,6 +64,49 @@ WRAPPER_PATH = os.path.expanduser("~/.local/bin/migrator")
 DATA_DIR = os.path.expanduser("~/.local/share/migrator")
 STATE_FILE = os.path.join(DATA_DIR, "system_state.json")
 LOG_FILE = os.path.join(DATA_DIR, "migrator.log")
+
+# Create a py_cui compatibility layer for different versions
+class PyCUICompat:
+    """Compatibility layer for different py_cui versions"""
+    
+    def __init__(self):
+        self.version = self._get_version()
+        print(f"Detected py_cui version: {self.version}")
+    
+    def _get_version(self):
+        """Get py_cui version"""
+        try:
+            return py_cui.__version__
+        except AttributeError:
+            # Older versions might not have __version__
+            return "0.0.3"  # Assume oldest version
+    
+    def add_menu(self, root, title, row, column, row_span, column_span):
+        """Add a menu widget compatible with the installed py_cui version"""
+        if self.version >= "0.1.0":
+            return root.add_scroll_menu(title, row, column, row_span=row_span, column_span=column_span)
+        else:
+            return root.add_menu(title, row, column, row_span=row_span, column_span=column_span)
+    
+    def add_text_block(self, root, title, row, column, row_span, column_span):
+        """Add a text block widget compatible with the installed py_cui version"""
+        if self.version >= "0.1.0":
+            return root.add_text_block(title, row, column, row_span=row_span, column_span=column_span)
+        else:
+            return root.add_block(title, row, column, row_span=row_span, column_span=column_span)
+    
+    def add_form(self, root, title, row, column, row_span, column_span):
+        """Add a form widget compatible with the installed py_cui version"""
+        if hasattr(root, "add_form"):
+            return root.add_form(title, row, column, row_span=row_span, column_span=column_span)
+        else:
+            # Fallback for older versions with no form support
+            block = root.add_block(title, row, column, row_span=row_span, column_span=column_span)
+            block.add_text_field = lambda *args, **kwargs: None  # Dummy method
+            return block
+
+# Initialize the compatibility layer
+PY_CUI_COMPAT = PyCUICompat()
 
 # Distribution-specific commands
 INSTALL_COMMANDS = {
@@ -163,29 +220,42 @@ class MigratorTui:
         
     def setup_ui(self):
         """Setup the UI layout and widgets"""
-        # Create the main menu
-        self.main_menu = self.root.add_scroll_menu("Main Menu", 0, 0, row_span=7, column_span=1)
-        self.main_menu.add_item_list([
-            "📊 Dashboard",
-            "🛠️ Install/Setup",
-            "🔍 Scan System",
-            "💾 Backups",
-            "🔄 Compare/Restore",
-            "⚙️ Service Management",
-            "❓ Help/About",
-            "❌ Exit"
-        ])
-        self.main_menu.add_key_command(py_cui.keys.KEY_ENTER, self.handle_menu_selection)
-        
-        # Right panel for content
-        self.content_panel = self.root.add_scroll_panel("Welcome to Migrator TUI", 0, 1, row_span=6, column_span=3)
-        
-        # Output panel for command output
-        self.output_panel = self.root.add_text_block("Command Output", 6, 1, row_span=3, column_span=3)
-        self.output_panel.set_text("Command output will appear here")
-        
-        # Default status
-        self.refresh_dashboard()
+        try:
+            # Create the main menu using compatibility layer
+            self.main_menu = PY_CUI_COMPAT.add_menu(
+                self.root, "Main Menu", 0, 0, row_span=7, column_span=1
+            )
+            
+            self.main_menu.add_item_list([
+                "📊 Dashboard",
+                "🛠️ Install/Setup",
+                "🔍 Scan System",
+                "💾 Backups",
+                "🔄 Compare/Restore",
+                "⚙️ Service Management",
+                "❓ Help/About",
+                "❌ Exit"
+            ])
+            self.main_menu.add_key_command(py_cui.keys.KEY_ENTER, self.handle_menu_selection)
+            
+            # Right panel for content using compatibility layer
+            self.content_panel = PY_CUI_COMPAT.add_text_block(
+                self.root, "Welcome to Migrator TUI", 0, 1, row_span=6, column_span=3
+            )
+            
+            # Output panel for command output using compatibility layer
+            self.output_panel = PY_CUI_COMPAT.add_text_block(
+                self.root, "Command Output", 6, 1, row_span=3, column_span=3
+            )
+            self.output_panel.set_text("Command output will appear here")
+            
+            # Default status
+            self.refresh_dashboard()
+        except Exception as e:
+            print(f"Error setting up UI: {str(e)}")
+            print("This could be due to incompatibility with your installed py_cui version.")
+            print("Try running './migrator-init.sh' and using the CLI menu instead.")
+            sys.exit(1)
         
     def handle_menu_selection(self):
         """Handle main menu selection"""
@@ -1131,14 +1201,47 @@ Select when you want the Migrator service to run:
 
 def main():
     """Main entry point for the TUI"""
-    # Set up the CUI with 9 rows, 4 columns
-    root = py_cui.PyCUI(9, 4)
-    
-    # Create our app
-    app = MigratorTui(root)
-    
-    # Start the CUI
-    root.start()
+    try:
+        # Verify terminal capabilities
+        terminal_size = shutil.get_terminal_size()
+        if terminal_size.columns < 80 or terminal_size.lines < 24:
+            print(f"Warning: Your terminal is {terminal_size.columns}x{terminal_size.lines}, which might be too small.")
+            print("Recommended minimum size is 80x24. Some UI elements may not display correctly.")
+            input("Press Enter to continue anyway or Ctrl+C to exit...")
+            
+        # Check py_cui version compatibility
+        py_cui_version = getattr(py_cui, "__version__", "0.0.3")
+        print(f"Using py_cui version: {py_cui_version}")
+        
+        # Set up the CUI with 9 rows, 4 columns
+        root = py_cui.PyCUI(9, 4)
+        
+        # Disable Unicode borders if it's an older version
+        if hasattr(root, "toggle_unicode_borders") and py_cui_version < "0.1.0":
+            root.toggle_unicode_borders()
+        
+        # Create our app
+        app = MigratorTui(root)
+        
+        # Start the CUI
+        root.start()
+        
+    except Exception as e:
+        print(f"Error initializing TUI: {str(e)}")
+        print("\nThis is likely due to terminal compatibility issues or py_cui version conflicts.")
+        print("You can try the following:")
+        print("1. Run './migrator-init.sh' and choose to use the CLI menu instead")
+        print("2. Try different terminal emulator software")
+        print("3. Try a different py_cui version with './migrator-init.sh tui'")
+        
+        # Capture error details for debugging
+        import traceback
+        error_details = traceback.format_exc()
+        with open(os.path.expanduser("~/migrator-tui-error.log"), "w") as f:
+            f.write(error_details)
+        print(f"\nDetailed error log saved to ~/migrator-tui-error.log")
+        
+        sys.exit(1)
 
 
 if __name__ == "__main__":

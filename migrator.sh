@@ -16,6 +16,8 @@
 
 # Default location for the virtual environment
 DEFAULT_VENV_PATH="$HOME/.venvs/migrator"
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+UNIFIED_SCRIPT="$SCRIPT_DIR/migrator-init.sh"
 
 # Function to find the migrator virtual environment
 find_venv() {
@@ -43,6 +45,16 @@ find_venv() {
     return 1
 }
 
+# Check if the unified script exists and is executable
+if [ -f "$UNIFIED_SCRIPT" ] && [ -x "$UNIFIED_SCRIPT" ]; then
+    # If no virtual environment exists, suggest using the unified script instead
+    if ! find_venv >/dev/null; then
+        echo "No Migrator virtual environment found. Using the unified installer/launcher instead."
+        echo "Running: $UNIFIED_SCRIPT $@"
+        exec "$UNIFIED_SCRIPT" "$@"
+    fi
+fi
+
 # Check if already in a virtual environment
 if [ -z "$VIRTUAL_ENV" ]; then
     # Find and activate the migrator virtual environment
@@ -57,14 +69,19 @@ if [ -z "$VIRTUAL_ENV" ]; then
         fi
     fi
     
-    # If no virtual environment found or activation failed, try running directly
-    if command -v python3 > /dev/null; then
-        SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-        echo "No migrator virtual environment found, running directly..."
-        python3 -m src.__main__ "$@"
-        exit $?
+    # If no virtual environment found or activation failed, show error with helpful message
+    if [ -f "$UNIFIED_SCRIPT" ]; then
+        echo "Error: Migrator virtual environment not found or not properly set up."
+        echo "Please run the unified installer/launcher script instead:"
+        echo "$UNIFIED_SCRIPT"
+        exit 1
     else
-        echo "Error: Python3 not found. Please install Python 3.6+ to use Migrator."
+        echo "Error: Migrator virtual environment not found or not properly set up."
+        echo "Please set up a virtual environment using:"
+        echo "python3 -m venv ~/.venvs/migrator"
+        echo "source ~/.venvs/migrator/bin/activate"
+        echo "pip install -r requirements.txt"
+        echo "pip install -e ."
         exit 1
     fi
 else

@@ -1,3 +1,5 @@
 distro>=1.5.0
-py_cui>=0.1.4
+setuptools>=42.0.0
 tqdm>=4.60.0
+# Optional TUI dependencies - will be installed if requested
+# py_cui>=0.1.4

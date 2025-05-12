@@ -78,58 +78,272 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
 
 ## Quickstart Guide
 
-### Quick Install
+### Simple Installation (Recommended)
 
 ```bash
-# 1. Install dependencies
-sudo apt install python3-venv python3-pip  # For Debian/Ubuntu
-# OR
-sudo dnf install python3-virtualenv python3-pip  # For Fedora/RHEL
-# OR
-sudo pacman -S python-virtualenv python-pip  # For Arch
-
-# 2. Clone the repository
+# Clone the repository
 git clone https://github.com/PBAP123/migrator.git
 cd migrator
 
-# 3. Set up and install in one command
-python3 -m venv ~/.venvs/migrator && \
-source ~/.venvs/migrator/bin/activate && \
-pip install -r requirements.txt && \
-pip install -e .
+# Make sure the installer script is executable
+chmod +x migrator-init.sh
 
-# 4. Make sure Migrator is in your PATH
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+# Run the interactive installer script
+./migrator-init.sh
 ```
 
-### Quick Backup (with all defaults)
+That's it! The interactive installer will:
+
+1. Check for required system dependencies
+2. Install missing Python packages automatically
+3. Set up the virtual environment with all necessary libraries
+4. Install Migrator and create wrapper scripts
+5. Present you with a menu of actions to take
+
+The installer offers these features:
+- **Interactive menu** with clear status indicators
+- **Automatic detection** of installation issues
+- **Self-healing** capabilities to fix common problems
+- **Update functionality** to easily update when you pull changes
+
+## Using Migrator
+
+After installation, you have several ways to use Migrator depending on your situation:
+
+### Which Method Should I Use?
+
+| If you want to... | Use this method |
+|-------------------|-----------------|
+| Install for the first time | `./migrator-init.sh` |
+| Update after git pull | `./migrator-init.sh update` |
+| Use Migrator day-to-day (Recommended) | `migrator` command or CLI menu |
+| Launch the graphical TUI (Experimental) | `migrator-tui` command |
+| Fix installation issues | `./migrator-init.sh` |
+| Get quick help | `./migrator-init.sh help` |
+
+### Regular Usage (After Installation)
+
+Once Migrator is installed, the recommended way to use it is through the CLI interface:
 
 ```bash
-# Create a complete system backup with all default settings
+# Run commands directly from terminal (Recommended)
+migrator scan                    # Scan your system
+migrator backup                  # Create a backup
+migrator restore backup.json     # Restore from a backup
+
+# Or use the CLI menu
+./migrator-init.sh               # Select option 2
+```
+
+These commands work from any directory and provide the most reliable experience for daily use.
+
+### Using the Terminal User Interface (TUI) - Experimental
+
+The TUI provides a more graphical interface in your terminal but may have compatibility issues:
+
+```bash
+# Launch via wrapper script (from anywhere)
+migrator-tui
+
+# Launch via the unified script (from repository directory)
+./migrator-init.sh tui
+```
+
+**Note on TUI Compatibility**: The TUI is experimental and requires the py_cui library, which may have compatibility issues on many systems. During installation, you'll be asked if you want to install TUI support. If the TUI fails to launch, Migrator will automatically fall back to the CLI menu, which provides all the same functionality in a more reliable format.
+
+### Using the CLI Fallback Menu
+
+The command-line interface (CLI) menu provides access to all Migrator functions in a simple text-based format:
+
+```
+Available commands:
+1) scan           - Scan system packages and configurations
+2) backup         - Create a backup of your system
+3) restore        - Restore from a backup
+4) compare        - Compare current system with a backup
+5) check          - Check for changes since last scan
+6) service        - Manage Migrator service
+7) help           - Show detailed help
+q) quit           - Exit the menu
+```
+
+This menu appears automatically if the TUI fails to launch, or you can access it directly:
+```bash
+# Via the interactive menu
+./migrator-init.sh
+# Select option 2) Run Migrator command line
+```
+
+## Common Tasks
+
+### Creating a Backup
+
+To create a complete system backup:
+
+```bash
+# Step 1: Scan your system
 migrator scan --include-desktop
+
+# Step 2: Create the backup (stores in ~/migrator_backups by default)
 migrator backup
 
-# The backup will be stored in ~/migrator_backups/
-# with a timestamped filename like migrator_backup_20230101_120000.json
+# Or specify a custom location
+migrator backup /path/to/backup/directory
 ```
 
-### Quick Restore (with all defaults)
+The backup will be saved as a JSON file with a timestamp, such as `migrator_backup_20230101_120000.json`.
+
+### Restoring from a Backup
+
+When setting up a new system:
 
 ```bash
-# On a new system, after installing Migrator:
+# Step 1: Install Migrator on the new system
+./migrator-init.sh
 
-# 1. Find your backup file (scans all drives automatically)
+# Step 2: Find your backup file (scans drives automatically)
 migrator locate-backup
 
-# 2. Restore from your backup with default options (with preview)
+# Step 3: Preview what will be restored (recommended)
 migrator restore PATH_TO_YOUR_BACKUP.json --dry-run
 
-# 3. Perform the actual restore if the preview looks good
+# Step 4: Perform the actual restoration
 migrator restore PATH_TO_YOUR_BACKUP.json --execute
 ```
 
-That's it! For more detailed options and advanced usage, continue reading below.
+For more control over the restoration process:
+```bash
+# Restore only packages
+migrator restore backup.json --packages-only
+
+# Restore only configuration files
+migrator restore backup.json --configs-only
+
+# Restore with specific version handling
+migrator restore backup.json --version-policy=prefer-newer
+```
+
+### Comparing Systems
+
+To see what's changed between your current system and a backup:
+
+```bash
+# Compare current system with a backup
+migrator compare PATH_TO_YOUR_BACKUP.json
+```
+
+### Setting Up as a Service
+
+Migrator can run regular checks as a system service:
+
+```bash
+# Install as a system service
+migrator install-service
+
+# Install as a user service (no sudo required)
+migrator install-service --user
+
+# Schedule daily checks at a specific time
+migrator install-service --daily "03:00"
+```
+
+## Updating Migrator
+
+### Updating After Code Changes
+
+When you pull updates from the Git repository, follow these steps to update your Migrator installation:
+
+```bash
+# Step 1: Pull the latest changes
+git pull origin main  # or whatever branch you're using
+
+# Step 2: Update Migrator using the built-in update command
+./migrator-init.sh update
+```
+
+The update process will:
+1. Upgrade all dependencies including setuptools
+2. Reinstall Migrator with the latest changes
+3. Recreate wrapper scripts to ensure they're up to date
+4. Check for and fix any common issues
+
+Alternatively, you can use the interactive menu:
+```bash
+# Launch the interactive menu
+./migrator-init.sh
+
+# Select option 3) Update Migrator
+```
+
+If you encounter any issues after updating, you can perform a clean installation:
+```bash
+# Select option 4) Clean installation from the menu
+./migrator-init.sh
+
+# Or use the command line:
+rm -rf ~/.venvs/migrator
+./migrator-init.sh
+```
+
+## Common Issues and Solutions
+
+If you encounter any of these issues:
+
+- **Missing dependencies**: The installer will automatically detect and install required packages
+- **TUI compatibility problems**: A CLI fallback menu will be presented automatically
+- **Wrapper script issues**: Use `./migrator-init.sh` directly or select the "Fix PATH" option
+- **Module import errors**: Try updating with `./migrator-init.sh update` or running a clean installation
+
+## Features
+
+- **Multi-Distribution Support**: Works on any Linux distribution by automatically detecting package managers.
+- **Package Tracking**: Tracks packages from various sources:
+  - Distribution-specific packages (apt, dnf, pacman, etc.)
+  - Snap packages
+  - Flatpak packages
+  - AppImages
+- **Configuration Tracking**: Identifies and tracks both system and user configuration files.
+- **Desktop Environment Backup**: Preserves your personalized desktop experience:
+  - Gnome settings and extensions
+  - KDE Plasma configurations
+  - XFCE, LXDE, Cinnamon, MATE settings
+  - Common window managers (i3, awesome, bspwm, etc.)
+  - Hardware-independent configurations only
+- **Incremental Backup**: Monitors changes to packages and configurations over time.
+- **Custom Backup Destinations**: Choose where your backups are stored:
+  - Define any local folder or network share as your backup location
+  - Configuration persists between sessions
+  - TUI interface for easy management
+- **Dynamic Path Handling**: Intelligent system-specific path handling:
+  - Automatically detects usernames and home directory paths during backup
+  - Adapts paths to match the target system during restoration
+  - Makes configuration files portable across different systems
+- **Selective Fstab Entry Backup**: Smart handling of mount entries:
+  - Analyzes /etc/fstab during backup and identifies portable entries
+  - Only backs up entries for network shares, special filesystems and non-hardware-specific mounts
+  - Ensures hardware-dependent entries aren't transferred between systems
+- **Dry Run Mode**: Preview all changes before execution:
+  - See exactly what packages will be installed
+  - Review configuration files that will be modified
+  - Identify path transformations that will be applied
+  - Examine fstab entries that will be added
+  - Discover potential conflicts before they occur
+  - Get confirmation before proceeding with actual changes
+- **Migration Planning**: Generates a plan for installing packages on a new system.
+- **Configuration Restoration**: Helps restore configuration files to their original locations.
+- **Terminal User Interface (TUI)**: Comprehensive terminal-based interface for easier management.
+- **Service Management**: Run as a background service with automatic checks.
+  - Run as a system-wide or user service
+  - Schedule service based on specific times of day
+  - Configure daily, weekly, or monthly execution
+  - Use advanced systemd timer scheduling
+- **Interactive Progress Tracking**: Real-time visual feedback for all operations:
+  - Progress bars show overall completion percentage
+  - Live status updates for what's currently being processed
+  - Running counts of processed items and remaining tasks
+  - Spinner animations for operations with unknown duration
+  - Detailed summaries upon completion
+  - Graceful fallback when running in environments without visual progress support
 
 ## Requirements
 
@@ -139,6 +353,9 @@ That's it! For more detailed options and advanced usage, continue reading below.
   - `python3-venv`: Required for creating virtual environments
   - `python3-pip`: Required for installing Python packages
   - `python3-distro` or the `distro` Python package (v1.5.0 or higher)
+  - `setuptools`: Required for package resources (installed automatically)
+- **Optional Packages** for TUI:
+  - `py_cui`: For the Terminal User Interface (installed on demand)
 - **Access to package managers** for detection (apt, snap, flatpak, etc.)
 
 ## Installation
@@ -632,3 +849,37 @@ Different package managers handle versions in different ways:
 - **pacman**: Limited to latest available version in repositories
 - **snap**: Control via revision numbers or channels
 - **flatpak**: Always installs latest version available
+
+## Frequently Asked Questions
+
+### General Usage Questions
+
+**Q: What's the difference between `migrator` and `./migrator-init.sh`?**  
+A: The `migrator` command is a wrapper script installed in your PATH that allows you to run Migrator from anywhere. The `./migrator-init.sh` script is the unified installer/launcher that must be run from the repository directory. Use `migrator` for day-to-day tasks and `./migrator-init.sh` for installation, updates, or troubleshooting.
+
+**Q: When should I use the TUI vs. CLI?**  
+A: The TUI (Terminal User Interface) provides a more graphical experience and is easier to navigate for new users. The CLI (Command Line Interface) is more reliable across different terminal setups and environments. If the TUI doesn't work in your terminal, the CLI fallback will automatically be presented.
+
+**Q: Do I need to run the installer script every time I use Migrator?**  
+A: No. After installation, you should use the wrapper scripts (`migrator` and `migrator-tui`) for daily use. Only use the installer script when updating Migrator or fixing installation issues.
+
+**Q: How do I know if Migrator is installed correctly?**  
+A: Run `./migrator-init.sh` and check the status indicators at the top of the menu. If all indicators show a green checkmark (✓), Migrator is installed correctly.
+
+### Installation and Updates
+
+**Q: What if the wrapper scripts don't work?**  
+A: This usually means either your PATH isn't set up correctly or the scripts weren't created. Run `./migrator-init.sh` and select the option to fix your PATH or update Migrator.
+
+**Q: How do I completely reinstall Migrator?**  
+A: Run `./migrator-init.sh`, then select option 4 for a "Clean installation." This will remove the virtual environment and reinstall everything from scratch.
+
+**Q: What happens when I update Migrator?**  
+A: When you run `./migrator-init.sh update`, the script:
+1. Upgrades all dependencies
+2. Reinstalls Migrator with the latest code
+3. Recreates the wrapper scripts
+4. Fixes common issues automatically
+
+**Q: Can I have multiple installations of Migrator?**  
+A: Yes, but they'll share the same wrapper scripts. If you need multiple installations, consider using different virtual environment paths and running directly from the source directories.

@@ -67,7 +67,7 @@ def setup_argparse() -> argparse.ArgumentParser:
     
     # Backup command
     backup_parser = subparsers.add_parser('backup', help='Backup system state')
-    backup_parser.add_argument('backup_dir', help='Directory to store backup')
+    backup_parser.add_argument('backup_dir', nargs='?', default=None, help='Directory to store backup (defaults to configured backup directory)')
     backup_parser.add_argument('--include-desktop', action='store_true', 
                              help='Include desktop environment configs')
     backup_parser.add_argument('--desktop-environments', 
@@ -230,7 +230,14 @@ def handle_scan(app: Migrator, args: argparse.Namespace) -> int:
 
 def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     """Handle backup command"""
-    print(f"Backing up system state to {args.backup_dir}...")
+    backup_dir = args.backup_dir
+    
+    if backup_dir is None:
+        # Use default backup directory
+        backup_dir = app.get_backup_dir()
+        print(f"Using default backup directory: {backup_dir}")
+    else:
+        print(f"Backing up system state to {backup_dir}...")
     
     # Process desktop environment options
     include_desktop = args.include_desktop if hasattr(args, 'include_desktop') else False
@@ -262,7 +269,7 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     )
     
     # Create backup
-    backup_file = app.backup_state(args.backup_dir)
+    backup_file = app.backup_state(backup_dir)
     
     if backup_file:
         print(f"Backup created successfully: {backup_file}")
