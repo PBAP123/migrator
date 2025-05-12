@@ -309,15 +309,28 @@ class Migrator:
             
             os.makedirs(backup_dir, exist_ok=True)
             
-            # Create a timestamped backup file
+            # Create a timestamped backup file with hostname
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = os.path.join(backup_dir, f"migrator_backup_{timestamp}.json")
+            hostname = self.system_variables.hostname
+            # Sanitize hostname for filename (remove invalid characters)
+            safe_hostname = ''.join(c if c.isalnum() or c in '-_' else '_' for c in hostname)
+            backup_file = os.path.join(backup_dir, f"migrator_backup_{timestamp}_{safe_hostname}.json")
             
             multi_progress.update_overall(1, f"Starting backup to {backup_dir}")
             
             try:
                 # Add system variables to the state for portability
                 self.state["system_variables"] = self.system_variables.to_dict()
+                
+                # Add enhanced metadata about the source machine
+                self.state["backup_metadata"] = {
+                    "hostname": self.system_variables.hostname,
+                    "distro_name": self.distro_info.name,
+                    "distro_version": self.distro_info.version,
+                    "distro_id": self.distro_info.id,
+                    "timestamp": timestamp,
+                    "backup_version": "1.1"  # Version of the backup format
+                }
                 
                 # Write the state file
                 with open(backup_file, 'w') as f:
@@ -485,6 +498,13 @@ class Migrator:
             if not all(key in backup_state for key in required_keys):
                 logger.error(f"Invalid backup file format: {backup_file}")
                 return False
+            
+            # Log backup metadata if available
+            if "backup_metadata" in backup_state:
+                metadata = backup_state["backup_metadata"]
+                logger.info(f"Backup source: {metadata.get('hostname', 'unknown')}, "
+                           f"Distribution: {metadata.get('distro_name', '')} {metadata.get('distro_version', '')}")
+                logger.info(f"Backup created: {metadata.get('timestamp', 'unknown')}")
             
             # Store backup as current state
             self.state = backup_state
@@ -1311,81 +1331,155 @@ class Migrator:
         return False
 
     def scan_for_backups(self, search_removable: bool = True, search_network: bool = False) -> List[str]:
-        """Scan common locations for Migrator backup files
+        """Scan common locations for Migrator backups
         
         This is particularly useful for finding backups on external media
-        when restoring to a fresh system.
         
         Args:
-            search_removable: Whether to search removable media (USB drives, etc.)
-            search_network: Whether to search network mounts (can be slow)
-            
+            search_removable: Whether to search removable media
+            search_network: Whether to search network mounts
+        
         Returns:
-            List of found backup file paths
+            List of paths to found backup files
         """
         backup_files = []
         
-        # First check home directory
-        home_backups_dir = os.path.expanduser("~/migrator_backups")
-        if os.path.exists(home_backups_dir):
-            for f in os.listdir(home_backups_dir):
+        # First check the configured backup directory
+        backup_dir = config.get_backup_dir()
+        if os.path.exists(backup_dir):
+            for f in os.listdir(backup_dir):
                 if f.startswith('migrator_backup_') and f.endswith('.json'):
-                    backup_files.append(os.path.join(home_backups_dir, f))
-
-        # Check external drives and mounted media
+                    backup_files.append(os.path.join(backup_dir, f))
+        
+        # Add more search paths as needed
+        search_paths = [
+            os.path.expanduser("~/Documents/migrator"),
+            os.path.expanduser("~/Backups/migrator")
+        ]
+        
         if search_removable:
-            # Common mount points for removable media
-            mount_points = [
-                "/media",   # Ubuntu/Debian style
-                "/run/media",  # Fedora/Arch style
-                "/mnt"      # General mount point
-            ]
+            # Add common removable media mount points
+            search_paths.extend([
+                "/media",
+                "/mnt",
+                os.path.expanduser("~/media")
+            ])
             
-            for mount_base in mount_points:
-                if os.path.exists(mount_base):
-                    # Look through user-specific mounts first (common in Ubuntu/Debian)
-                    if os.path.exists(os.path.join(mount_base, self.system_variables.username)):
-                        user_media = os.path.join(mount_base, self.system_variables.username)
-                        for drive in os.listdir(user_media):
-                            drive_path = os.path.join(user_media, drive)
-                            if os.path.isdir(drive_path):
-                                # Check for migrator_backups directory
-                                backup_dir = os.path.join(drive_path, "migrator_backups")
-                                if os.path.exists(backup_dir):
-                                    for f in os.listdir(backup_dir):
-                                        if f.startswith('migrator_backup_') and f.endswith('.json'):
-                                            backup_files.append(os.path.join(backup_dir, f))
-                
-                    # Also check direct mounts (common in Fedora/Arch)
-                    for drive in os.listdir(mount_base):
-                        drive_path = os.path.join(mount_base, drive)
-                        if os.path.isdir(drive_path):
-                            # Skip user directory we already checked
-                            if drive == self.system_variables.username:
-                                continue
-                            
-                            # Check for migrator_backups directory
-                            backup_dir = os.path.join(drive_path, "migrator_backups")
-                            if os.path.exists(backup_dir):
-                                for f in os.listdir(backup_dir):
-                                    if f.startswith('migrator_backup_') and f.endswith('.json'):
-                                        backup_files.append(os.path.join(backup_dir, f))
-        
-        # Check network shares if requested (could be slow)
         if search_network:
-            network_mounts = ["/net", "/Network"]
-            for network_base in network_mounts:
-                if os.path.exists(network_base):
-                    for share in os.listdir(network_base):
-                        share_path = os.path.join(network_base, share)
-                        if os.path.isdir(share_path):
-                            # Check for migrator_backups directory
-                            backup_dir = os.path.join(share_path, "migrator_backups")
-                            if os.path.exists(backup_dir):
-                                for f in os.listdir(backup_dir):
-                                    if f.startswith('migrator_backup_') and f.endswith('.json'):
-                                        backup_files.append(os.path.join(backup_dir, f))
-        
-        # Sort by modification time (newest first)
-        backup_files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+            # Add network mount points
+            search_paths.extend([
+                "/net",
+                "/srv/nfs",
+                os.path.expanduser("~/network")
+            ])
+            
+        # Search paths
+        for base_path in search_paths:
+            if not os.path.exists(base_path):
+                continue
+                
+            # Look for backup files in each path
+            self._scan_directory_for_backups(base_path, backup_files)
+            
         return backup_files
+        
+    def _scan_directory_for_backups(self, directory: str, backup_files: List[str], max_depth: int = 2) -> None:
+        """Scan a directory (recursively) for backup files
+        
+        Args:
+            directory: Directory to scan
+            backup_files: List to append found backup files to
+            max_depth: Maximum recursion depth
+        """
+        if max_depth <= 0:
+            return
+            
+        try:
+            for item in os.listdir(directory):
+                item_path = os.path.join(directory, item)
+                
+                # Check if it's a backup file
+                if os.path.isfile(item_path) and item.startswith('migrator_backup_') and item.endswith('.json'):
+                    backup_files.append(item_path)
+                    
+                # Recurse into subdirectories
+                elif os.path.isdir(item_path):
+                    self._scan_directory_for_backups(item_path, backup_files, max_depth - 1)
+        except (PermissionError, OSError):
+            # Skip directories we can't access
+            pass
+
+    def get_backup_metadata(self, backup_file: str) -> Dict[str, Any]:
+        """Get metadata from a backup file
+        
+        Args:
+            backup_file: Path to the backup file
+        
+        Returns:
+            Dictionary containing metadata about the backup
+        """
+        try:
+            # Check if file exists
+            if not os.path.exists(backup_file):
+                return {"error": "Backup file not found"}
+                
+            # Load backup file
+            with open(backup_file, 'r') as f:
+                backup_data = json.load(f)
+                
+            # Get file info
+            file_size = os.path.getsize(backup_file)
+            file_date = datetime.datetime.fromtimestamp(os.path.getmtime(backup_file))
+            filename = os.path.basename(backup_file)
+                
+            # Extract metadata
+            metadata = {}
+            
+            # Basic file info
+            metadata["filename"] = filename
+            metadata["file_size"] = file_size
+            metadata["file_date"] = file_date.isoformat()
+            
+            # New backup metadata format
+            if "backup_metadata" in backup_data:
+                metadata.update(backup_data["backup_metadata"])
+            else:
+                # Extract from basic system info
+                if "system_info" in backup_data:
+                    metadata["distro_name"] = backup_data["system_info"].get("distro_name", "")
+                    metadata["distro_version"] = backup_data["system_info"].get("distro_version", "")
+                    metadata["distro_id"] = backup_data["system_info"].get("distro_id", "")
+                
+                # Extract from system variables if available
+                if "system_variables" in backup_data:
+                    metadata["hostname"] = backup_data["system_variables"].get("hostname", "unknown")
+                    metadata["username"] = backup_data["system_variables"].get("username", "")
+                
+                # Parse timestamp and hostname from filename
+                if "_backup_" in filename and filename.endswith(".json"):
+                    # Try to parse the new format: migrator_backup_YYYYMMDD_HHMMSS_hostname.json
+                    parts = filename.replace(".json", "").split("_backup_")[1].split("_")
+                    if len(parts) >= 2:
+                        date_part = parts[0]
+                        if len(date_part) >= 8:  # YYYYMMDD
+                            metadata["timestamp"] = date_part
+                        
+                        # If there are at least 3 parts (timestamp, time, hostname)
+                        if len(parts) >= 3:
+                            # Join any parts after the time as the hostname (in case hostname had underscores)
+                            hostname_part = "_".join(parts[2:])
+                            if "hostname" not in metadata or metadata["hostname"] == "unknown":
+                                metadata["hostname"] = hostname_part
+            
+            # Count items
+            metadata["package_count"] = len(backup_data.get("packages", []))
+            metadata["config_count"] = len(backup_data.get("config_files", []))
+            
+            # Get package managers used
+            package_sources = list(set(pkg.get("source", "") for pkg in backup_data.get("packages", [])))
+            metadata["package_sources"] = package_sources
+            
+            return metadata
+        except Exception as e:
+            logger.error(f"Error getting backup metadata: {e}")
+            return {"error": str(e)}

@@ -190,6 +190,14 @@ def setup_argparse() -> argparse.ArgumentParser:
                                                       help='Set the backup directory')
     set_backup_dir_parser.add_argument('backup_dir', help='Path to the backup directory')
     
+    # List backups command
+    list_backups_parser = subparsers.add_parser('list-backups', 
+                                              help='List available backups with metadata')
+    list_backups_parser.add_argument('--backup-dir', 
+                                   help='Directory to search for backups (defaults to configured backup directory)')
+    list_backups_parser.add_argument('--show-detail', '-d', action='store_true',
+                                   help='Show detailed metadata for each backup')
+    
     # Locate backups command
     locate_parser = subparsers.add_parser('locate-backup', 
                                         help='Scan common locations for Migrator backups')
@@ -781,17 +789,52 @@ def handle_locate_backup(app: Migrator, args: argparse.Namespace) -> int:
         return 1
     
     print(f"\nFound {len(backup_files)} Migrator backup file{'s' if len(backup_files) > 1 else ''}:")
+    print("-" * 80)
     
     for i, backup_path in enumerate(backup_files, 1):
-        # Try to get the backup date from the filename
         try:
-            filename = os.path.basename(backup_path)
-            date_part = filename.split('_backup_')[1].split('.json')[0]
-            date_str = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]} {date_part[9:11]}:{date_part[11:13]}:{date_part[13:15]}"
-            print(f"{i}. {backup_path} (created: {date_str})")
-        except:
-            # If parsing fails, just show the path
-            print(f"{i}. {backup_path}")
+            # Get backup metadata
+            metadata = app.get_backup_metadata(backup_path)
+            
+            # Format size
+            file_size = metadata.get("file_size", 0) / (1024 * 1024)  # Convert to MB
+            
+            # Format and display timestamp
+            date_str = "unknown date"
+            if "timestamp" in metadata:
+                timestamp = metadata["timestamp"]
+                # Check if timestamp contains date and time parts
+                if len(timestamp) >= 15:  # Old format with full YYYYMMDD_HHMMSS
+                    date_str = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[9:11]}:{timestamp[11:13]}"
+                else:  # New format with separate date part
+                    # Try to find the time part in the filename
+                    filename = metadata.get("filename", "")
+                    parts = filename.replace(".json", "").split("_backup_")[1].split("_")
+                    if len(parts) >= 2:
+                        date_str = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {parts[1][:2]}:{parts[1][2:4]}"
+                    else:
+                        date_str = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}"
+            
+            # Display info
+            print(f"{i}. {os.path.basename(backup_path)}")
+            print(f"   Path: {backup_path}")
+            print(f"   Created: {date_str}")
+            
+            # Show source system info if available
+            hostname = metadata.get("hostname", "unknown")
+            distro_name = metadata.get("distro_name", "")
+            distro_version = metadata.get("distro_version", "")
+            if distro_name or hostname != "unknown":
+                print(f"   Source: {hostname}, {distro_name} {distro_version}")
+            
+            print(f"   Size: {file_size:.2f} MB")
+            print("-" * 80)
+            
+        except Exception as e:
+            # Fallback to basic display if metadata can't be retrieved
+            print(f"{i}. {os.path.basename(backup_path)}")
+            print(f"   Path: {backup_path}")
+            print("-" * 80)
     
     # Save to file if specified
     if hasattr(args, 'output') and args.output:
@@ -871,6 +914,97 @@ def handle_setup(app: Migrator, args: argparse.Namespace) -> int:
         print("Setup was cancelled. You can run 'migrator setup' anytime to configure Migrator.")
         return 1
 
+def handle_list_backups(app: Migrator, args: argparse.Namespace) -> int:
+    """Handle list-backups command"""
+    # Determine which backup directory to use
+    if hasattr(args, 'backup_dir') and args.backup_dir:
+        backup_dir = os.path.expanduser(args.backup_dir)
+    else:
+        backup_dir = app.get_backup_dir()
+    
+    print(f"Listing backups in: {backup_dir}")
+    
+    if not os.path.exists(backup_dir):
+        print(f"Error: Backup directory {backup_dir} does not exist")
+        return 1
+    
+    # Find all backup files
+    backup_files = [
+        os.path.join(backup_dir, f) 
+        for f in os.listdir(backup_dir) 
+        if f.startswith('migrator_backup_') and f.endswith('.json')
+    ]
+    
+    if not backup_files:
+        print("No backup files found.")
+        return 0
+    
+    # Sort by modification time (newest first)
+    backup_files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+    
+    print(f"\nFound {len(backup_files)} backup{'s' if len(backup_files) > 1 else ''}:")
+    print("-" * 80)
+    
+    for i, backup_path in enumerate(backup_files, 1):
+        try:
+            # Get backup metadata
+            metadata = app.get_backup_metadata(backup_path)
+            
+            # Format size
+            file_size = metadata.get("file_size", 0) / (1024 * 1024)  # Convert to MB
+            
+            # Print basic info
+            print(f"{i}. {os.path.basename(backup_path)}")
+            
+            # Format and display timestamp
+            if "timestamp" in metadata:
+                timestamp = metadata["timestamp"]
+                # Check if timestamp contains date and time parts
+                if len(timestamp) >= 15:  # Old format with full YYYYMMDD_HHMMSS
+                    timestamp_display = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[9:11]}:{timestamp[11:13]}"
+                else:  # New format with separate date part
+                    # Try to find the time part in the filename
+                    filename = metadata.get("filename", "")
+                    parts = filename.replace(".json", "").split("_backup_")[1].split("_")
+                    if len(parts) >= 2:
+                        timestamp_display = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {parts[1][:2]}:{parts[1][2:4]}"
+                    else:
+                        timestamp_display = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}"
+                
+                print(f"   Created: {timestamp_display}")
+            
+            # Show source information
+            hostname = metadata.get("hostname", "unknown")
+            distro_name = metadata.get("distro_name", "")
+            distro_version = metadata.get("distro_version", "")
+            print(f"   Source: {hostname}, {distro_name} {distro_version}")
+            print(f"   Size: {file_size:.2f} MB")
+            
+            # Show detailed info if requested
+            if hasattr(args, 'show_detail') and args.show_detail:
+                # Count packages and config files
+                package_count = metadata.get("package_count", 0)
+                config_count = metadata.get("config_count", 0)
+                
+                # Get a list of package managers
+                package_sources = metadata.get("package_sources", [])
+                
+                print(f"   Packages: {package_count} ({', '.join(package_sources) if package_sources else 'none'})")
+                print(f"   Config files: {config_count}")
+                
+                # Display username if available
+                username = metadata.get("username", "")
+                if username:
+                    print(f"   Username: {username}")
+            
+            print("-" * 80)
+            
+        except Exception as e:
+            print(f"{i}. {os.path.basename(backup_path)} (Error reading metadata: {e})")
+            print("-" * 80)
+    
+    return 0
+
 def main() -> int:
     """Main entry point for the application"""
     parser = setup_argparse()
@@ -919,6 +1053,8 @@ def main() -> int:
         return handle_locate_backup(app, args)
     elif args.command == 'setup':
         return handle_setup(app, args)
+    elif args.command == 'list-backups':
+        return handle_list_backups(app, args)
     else:
         # Show help if no command specified
         parser.print_help()
