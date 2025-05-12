@@ -73,11 +73,13 @@ class FstabEntry:
         # 1. Network filesystems (NFS, CIFS/SMB, etc.)
         if any(fs in self.fs_type.lower() for fs in ['nfs', 'cifs', 'smb', 'sshfs']):
             self.is_portable = True
+            logger.debug(f"Entry marked portable (network filesystem): {self.fs_spec} -> {self.mount_point}")
             return
             
         # 2. Remote/network paths in fs_spec
         if self.fs_spec.startswith('//') or ':' in self.fs_spec:
             self.is_portable = True
+            logger.debug(f"Entry marked portable (network path): {self.fs_spec} -> {self.mount_point}")
             return
             
         # 3. Special filesystem types that are not hardware-dependent
@@ -87,6 +89,7 @@ class FstabEntry:
         ]
         if self.fs_type.lower() in portable_fs_types:
             self.is_portable = True
+            logger.debug(f"Entry marked portable (special filesystem): {self.fs_spec} -> {self.mount_point}")
             return
             
         # 4. Bind mounts (these might be portable depending on the source)
@@ -95,10 +98,27 @@ class FstabEntry:
             portable_sources = ['/var', '/home', '/opt', '/usr', '/etc']
             if any(self.fs_spec.startswith(src) for src in portable_sources):
                 self.is_portable = True
+                logger.debug(f"Entry marked portable (bind mount): {self.fs_spec} -> {self.mount_point}")
                 return
         
         # By default, entries are considered non-portable (hardware-specific)
         self.is_portable = False
+        logger.debug(f"Entry not portable: {self.fs_spec} -> {self.mount_point}")
+    
+    @property
+    def device(self) -> str:
+        """Alias for fs_spec for compatibility"""
+        return self.fs_spec
+    
+    @property
+    def fstype(self) -> str:
+        """Alias for fs_type for compatibility"""
+        return self.fs_type
+    
+    @property
+    def mountpoint(self) -> str:
+        """Alias for mount_point for compatibility"""
+        return self.mount_point
     
     def to_line(self) -> str:
         """Convert back to a fstab line"""

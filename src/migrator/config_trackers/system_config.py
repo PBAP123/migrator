@@ -128,10 +128,20 @@ class SystemConfigTracker(ConfigTracker):
         
         # Check if fstab exists and is readable
         if os.path.exists(fstab_path) and os.access(fstab_path, os.R_OK):
+            logger.info(f"Processing fstab file: {fstab_path}")
             self.fstab_manager = FstabManager(fstab_path)
             
             # Get portable entries
             self.portable_fstab_entries = self.fstab_manager.get_portable_entries()
+            
+            # Log all entries for debugging
+            logger.info(f"Found {len(self.fstab_manager.entries)} total fstab entries")
+            logger.info(f"Identified {len(self.portable_fstab_entries)} portable entries")
+            
+            # Log details of all entries for debugging
+            for i, entry in enumerate(self.fstab_manager.entries):
+                if entry.is_valid and not entry.is_comment:
+                    logger.debug(f"Fstab entry {i+1}: {entry.fs_spec} -> {entry.mount_point} ({entry.fs_type}) Portable: {entry.is_portable}")
             
             if self.portable_fstab_entries:
                 # Create a special config file for portable fstab entries
