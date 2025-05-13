@@ -40,6 +40,7 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - XFCE, LXDE, Cinnamon, MATE settings
   - Common window managers (i3, awesome, bspwm, etc.)
   - Hardware-independent configurations only
+  - Note: .desktop files (desktop shortcuts) are not backed up as they are automatically regenerated during package installation
 - **Incremental Backup**: Monitors changes to packages and configurations over time.
 - **Custom Backup Destinations**: Choose where your backups are stored:
   - Define any local folder or network share as your backup location

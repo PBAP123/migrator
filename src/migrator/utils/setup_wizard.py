@@ -224,6 +224,7 @@ class SetupWizard:
                 print("- Absolute paths (e.g., /home/user/Downloads)")
                 print("- Home directory paths (e.g., ~/.local/share/Steam)")
                 print("- Glob patterns (e.g., ~/.config/chrome/*/Cache)")
+                print("- Example: ~/.local/share/applications/*.desktop (desktop shortcuts are auto-generated)")
                 
                 exclude_paths_input = self._get_input(
                     "\nPaths to exclude",

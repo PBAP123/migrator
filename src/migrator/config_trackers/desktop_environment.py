@@ -122,10 +122,6 @@ class DesktopEnvironmentTracker(ConfigTracker):
                 "~/.config/gtk-3.0/bookmarks",
                 "~/.config/gtk-4.0/*",
             ],
-            # Desktop entry files
-            "applications": [
-                "~/.local/share/applications/*.desktop",
-            ],
             # Session managers
             "session": [
                 "~/.config/autostart/*",
@@ -157,6 +153,7 @@ class DesktopEnvironmentTracker(ConfigTracker):
             "**/uuid*",
             # Graphics drivers
             "**/nvidia*",
+            "**/.nvidia-settings-rc",
             "**/amdgpu*",
             "**/intel-*",
             "**/xorg.conf*",
@@ -206,7 +203,7 @@ class DesktopEnvironmentTracker(ConfigTracker):
         # Always include X11 configs if we're in a graphical environment
         if os.environ.get('DISPLAY') or desktop or session:
             installed_des.append("x11")
-            installed_des.append("applications")
+            # applications category removed since .desktop files are automatically regenerated
             installed_des.append("session")
         
         logger.info(f"Detected desktop environments and window managers: {installed_des}")
