@@ -139,6 +139,22 @@ class PackageManager(ABC):
         """Check if a package was explicitly installed by the user (not as a dependency)"""
         pass
 
+    @abstractmethod
+    def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
+        """Plan package installation without executing it
+        
+        This method analyzes a list of packages and determines which could be installed,
+        which versions are available, and what commands would be used - without actually
+        executing any installation.
+        
+        Args:
+            packages: List of package dictionaries from backup
+            
+        Returns:
+            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+        """
+        pass
+
 
 class PackageManagerFactory:
     """Factory for creating appropriate package managers"""

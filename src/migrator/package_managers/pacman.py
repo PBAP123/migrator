@@ -235,4 +235,72 @@ class PacmanPackageManager(PackageManager):
             
         except subprocess.SubprocessError as e:
             logger.error(f"Error installing package {package_name}: {e}")
-            return False 
+            return False
+            
+    def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
+        """Plan package installation without executing it
+        
+        Args:
+            packages: List of package dictionaries from backup
+            
+        Returns:
+            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+        """
+        available_packages = []
+        unavailable_packages = []
+        upgradable_packages = []
+        commands = []
+        
+        # Calculate total for progress reporting
+        total = len(packages)
+        logger.info(f"Planning installation for {total} Pacman packages")
+        
+        for i, pkg in enumerate(packages):
+            name = pkg.get('name', '')
+            version = pkg.get('version', '')
+            
+            # Skip if name is missing
+            if not name:
+                continue
+                
+            # Check if package is available in the repositories
+            if not self.is_package_available(name):
+                pkg['reason'] = 'Package not available in current repositories'
+                unavailable_packages.append(pkg)
+                continue
+                
+            # Get latest version (for Pacman, typically only the latest version is available)
+            latest = self.get_latest_version(name)
+            
+            if not latest:
+                pkg['reason'] = 'Package exists but version information unavailable'
+                unavailable_packages.append(pkg)
+                continue
+                
+            # For Pacman, we can only install the latest version from repositories
+            if version and version != latest:
+                # Specific version requested but only latest is available
+                pkg_copy = pkg.copy()
+                pkg_copy['available_version'] = latest
+                upgradable_packages.append(pkg_copy)
+                commands.append(f"pacman -S --noconfirm {name}  # Note: Requested version {version} not available, will install {latest}")
+                
+                # Add a note about handling specific versions
+                if len(commands) == 1:  # Add this note only once
+                    commands.append("# Note: Pacman only provides the latest version in repositories.")
+                    commands.append("# To install specific versions, consider:")
+                    commands.append("#  1. Using AUR helpers for specific versions")
+                    commands.append("#  2. Using the pacman cache for downgrading")
+                    commands.append("#  3. Manual installation from archived packages")
+            else:
+                # Either no specific version requested or the requested version matches latest
+                pkg_copy = pkg.copy()
+                pkg_copy['available_version'] = latest
+                available_packages.append(pkg_copy)
+                commands.append(f"pacman -S --noconfirm {name}  # Will install version {latest}")
+            
+            # Report progress periodically
+            if (i+1) % 10 == 0 or (i+1) == total:
+                logger.info(f"Planning progress: {i+1}/{total} packages processed")
+                
+        return available_packages, unavailable_packages, upgradable_packages, commands 

@@ -287,4 +287,91 @@ class SnapPackageManager(PackageManager):
     def is_user_installed(self, package_name: str) -> bool:
         """Check if a snap package was explicitly installed by the user"""
         # All snap packages are considered user-installed
-        return self.get_installed_version(package_name) is not None 
+        return self.get_installed_version(package_name) is not None
+        
+    def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
+        """Plan snap package installation without executing it
+        
+        Args:
+            packages: List of package dictionaries from backup
+            
+        Returns:
+            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+        """
+        available_packages = []
+        unavailable_packages = []
+        upgradable_packages = []
+        commands = []
+        
+        if not self.available:
+            # If snap is not available, all packages are considered unavailable
+            for pkg in packages:
+                pkg_copy = pkg.copy()
+                pkg_copy['reason'] = 'Snap package manager not available on this system'
+                unavailable_packages.append(pkg_copy)
+            return available_packages, unavailable_packages, upgradable_packages, commands
+            
+        # Process each package
+        total = len(packages)
+        logger.info(f"Planning installation for {total} snap packages")
+        
+        for i, pkg in enumerate(packages):
+            name = pkg.get('name', '')
+            version = pkg.get('version', '')
+            
+            # Skip if name is missing
+            if not name:
+                continue
+            
+            # Check if package is available in the snap store
+            if not self.is_package_available(name):
+                pkg_copy = pkg.copy()
+                pkg_copy['reason'] = 'Package not available in Snap store'
+                unavailable_packages.append(pkg_copy)
+                continue
+                
+            # For Snap, we have two version-like concepts:
+            # 1. Channel (stable, edge, etc.)
+            # 2. Revision number
+            
+            # Determine if the version looks like a channel or revision
+            is_revision = version and version.isdigit()
+            is_channel = version and not is_revision
+            
+            # Check if specific version/channel/revision is available
+            if version and self.is_version_available(name, version):
+                # Exact version/channel/revision is available
+                available_packages.append(pkg)
+                if is_revision:
+                    commands.append(f"snap install {name} --revision {version}")
+                elif is_channel:
+                    commands.append(f"snap install {name} --channel {version}")
+                else:
+                    commands.append(f"snap install {name}")
+            else:
+                # No specific version requested or requested version not available
+                # For Snap, we typically just install the latest version from the stable channel
+                latest = self.get_latest_version(name)
+                
+                if latest:
+                    pkg_copy = pkg.copy()
+                    pkg_copy['available_version'] = latest
+                    if version:
+                        # Requested specific version but using a different one
+                        upgradable_packages.append(pkg_copy)
+                        commands.append(f"snap install {name}  # Requested: {version}, Available: latest ({latest})")
+                    else:
+                        # No specific version requested
+                        available_packages.append(pkg_copy)
+                        commands.append(f"snap install {name}  # Will install version {latest}")
+                else:
+                    # Package exists but no version info available - rare for Snap
+                    pkg_copy = pkg.copy()
+                    pkg_copy['reason'] = 'Package exists but version information unavailable'
+                    unavailable_packages.append(pkg_copy)
+            
+            # Report progress periodically
+            if (i+1) % 5 == 0 or (i+1) == total:
+                logger.info(f"Planning progress: {i+1}/{total} snap packages processed")
+                
+        return available_packages, unavailable_packages, upgradable_packages, commands 

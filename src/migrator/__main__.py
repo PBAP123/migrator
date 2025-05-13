@@ -490,6 +490,44 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     
     print(f"Restoring system state from {args.backup_file}...")
     
+    # Offer options to compare or plan before continuing with restore
+    print("\nBefore restoring, would you like to:")
+    print("1. Continue with restore")
+    print("2. Generate an installation plan first")
+    print("3. Compare with current system first")
+    print("4. Cancel restore operation")
+    
+    choice = input("Enter your choice (1-4): ")
+    
+    if choice == '2':
+        # Create plan args and call handle_plan
+        plan_args = argparse.Namespace()
+        plan_args.backup_file = args.backup_file
+        handle_plan(app, plan_args)
+        
+        # Ask if they want to continue
+        continue_restore = input("\nDo you want to continue with the restore? (yes/no): ").lower().strip()
+        if continue_restore != 'yes':
+            print("Restore operation cancelled.")
+            return 0
+        
+    elif choice == '3':
+        # Create compare args and call handle_compare
+        compare_args = argparse.Namespace()
+        compare_args.backup_file = args.backup_file
+        compare_args.output = None
+        handle_compare(app, compare_args)
+        
+        # Ask if they want to continue
+        continue_restore = input("\nDo you want to continue with the restore? (yes/no): ").lower().strip()
+        if continue_restore != 'yes':
+            print("Restore operation cancelled.")
+            return 0
+            
+    elif choice == '4':
+        print("Restore operation cancelled.")
+        return 0
+    
     # Check for dry run mode
     dry_run = args.dry_run if hasattr(args, 'dry_run') else False
     

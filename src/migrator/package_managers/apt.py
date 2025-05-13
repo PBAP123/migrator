@@ -288,4 +288,75 @@ class AptPackageManager(PackageManager):
             
         except subprocess.SubprocessError as e:
             logger.error(f"Error installing package {package_name}: {e}")
-            return False 
+            return False
+    
+    def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
+        """Plan package installation without executing it
+        
+        Args:
+            packages: List of package dictionaries from backup
+            
+        Returns:
+            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+        """
+        available_packages = []
+        unavailable_packages = []
+        upgradable_packages = []
+        commands = []
+        
+        # Calculate total for progress reporting
+        total = len(packages)
+        logger.info(f"Planning installation for {total} apt packages")
+        
+        # Group packages for more efficient batch checking later
+        for i, pkg in enumerate(packages):
+            name = pkg.get('name', '')
+            version = pkg.get('version', '')
+            
+            # Skip if name is missing
+            if not name:
+                continue
+                
+            # Check if package is available in the repositories
+            if not self.is_package_available(name):
+                pkg['reason'] = 'Package not available in current repositories'
+                unavailable_packages.append(pkg)
+                continue
+                
+            # Check if specific version is requested and available
+            if version and self.is_version_available(name, version):
+                # Exact version is available
+                available_packages.append(pkg)
+                commands.append(f"apt install -y {name}={version}")
+            elif version:
+                # Specific version requested but not available
+                latest = self.get_latest_version(name)
+                if latest:
+                    # A different version is available
+                    pkg_copy = pkg.copy()
+                    pkg_copy['available_version'] = latest
+                    upgradable_packages.append(pkg_copy)
+                    commands.append(f"apt install -y {name}  # Requested: {version}, Available: {latest}")
+                else:
+                    # No version available
+                    pkg['reason'] = f'Requested version {version} not available and no alternative found'
+                    unavailable_packages.append(pkg)
+            else:
+                # No specific version requested
+                latest = self.get_latest_version(name)
+                if latest:
+                    # Latest version is available
+                    pkg_copy = pkg.copy()
+                    pkg_copy['available_version'] = latest
+                    available_packages.append(pkg_copy)
+                    commands.append(f"apt install -y {name}  # Will install version {latest}")
+                else:
+                    # Package exists in repo but no installable version found
+                    pkg['reason'] = 'Package exists but no installable version found'
+                    unavailable_packages.append(pkg)
+            
+            # Report progress periodically
+            if (i+1) % 10 == 0 or (i+1) == total:
+                logger.info(f"Planning progress: {i+1}/{total} packages processed")
+                
+        return available_packages, unavailable_packages, upgradable_packages, commands 

@@ -1140,6 +1140,234 @@ class Migrator:
             logger.error(f"Error restoring from backup: {e}")
             return False
             
+    def generate_installation_plan(self, backup_file: str) -> Dict[str, Any]:
+        """Generate a package installation plan from backup file without executing it
+        
+        This function analyzes a backup file and creates a detailed plan of what would be
+        installed, but does not make any changes to the system.
+        
+        Args:
+            backup_file: Path to the backup file
+            
+        Returns:
+            Dict containing installation plan details
+        """
+        logger.info(f"Generating installation plan from {backup_file}")
+        
+        try:
+            # Check if file exists
+            if not os.path.exists(backup_file):
+                logger.error(f"Backup file not found: {backup_file}")
+                return {
+                    "available": [],
+                    "unavailable": [],
+                    "upgradable": [],
+                    "installation_commands": []
+                }
+                
+            # Load backup file
+            with open(backup_file, 'r') as f:
+                backup_data = json.load(f)
+                
+            # Extract metadata
+            metadata = backup_data.get("backup_metadata", {})
+            source_distro = metadata.get("distro_name", "Unknown")
+            source_distro_id = metadata.get("distro_id", "unknown")
+            
+            # Load packages from backup
+            packages = backup_data.get("packages", [])
+            if not packages:
+                logger.warning("No packages found in backup")
+                return {
+                    "available": [],
+                    "unavailable": [],
+                    "upgradable": [],
+                    "installation_commands": []
+                }
+                
+            logger.info(f"Found {len(packages)} packages in backup from {source_distro}")
+            
+            # Initialize lists for package status
+            available_packages = []
+            unavailable_packages = []
+            upgradable_packages = []
+            installation_commands = []
+            
+            # Group packages by package manager
+            grouped_packages = {}
+            for pkg in packages:
+                source = pkg.get("source", "unknown")
+                if source not in grouped_packages:
+                    grouped_packages[source] = []
+                grouped_packages[source].append(pkg)
+            
+            # Create a dictionary mapping package manager names to instances
+            pkg_manager_map = {pm.name: pm for pm in self.package_managers}
+            
+            # Check availability for each package manager
+            for source, pkgs in grouped_packages.items():
+                # Get the appropriate package manager instance
+                if source in pkg_manager_map:
+                    pkg_manager = pkg_manager_map[source]
+                    logger.info(f"Checking availability of {len(pkgs)} {source} packages")
+                    
+                    # Get list of available packages and potential installation commands
+                    available, unavailable, upgrade_candidates, commands = pkg_manager.plan_installation(pkgs)
+                    
+                    # Add to our overall lists
+                    available_packages.extend(available)
+                    unavailable_packages.extend(unavailable)
+                    upgradable_packages.extend(upgrade_candidates)
+                    installation_commands.extend(commands)
+                    
+                    logger.info(f"Plan for {source}: {len(available)} available, {len(unavailable)} unavailable")
+                else:
+                    # If package manager not available, all packages are unavailable
+                    logger.warning(f"Package manager {source} not available on this system")
+                    for pkg in pkgs:
+                        pkg["reason"] = f"Package manager {source} not available on this system"
+                        unavailable_packages.append(pkg)
+            
+            # Create and return the plan
+            plan = {
+                "available": available_packages,
+                "unavailable": unavailable_packages,
+                "upgradable": upgradable_packages,
+                "installation_commands": installation_commands
+            }
+            
+            return plan
+            
+        except Exception as e:
+            logger.error(f"Error generating installation plan: {e}")
+            return {
+                "available": [],
+                "unavailable": [],
+                "upgradable": [],
+                "installation_commands": []
+            }
+
+    def generate_config_restoration_plan(self, backup_file: str) -> Dict[str, Any]:
+        """Generate a configuration file restoration plan without executing it
+        
+        Args:
+            backup_file: Path to the backup file
+            
+        Returns:
+            Dict containing restoration plan details
+        """
+        logger.info(f"Generating config restoration plan from {backup_file}")
+        
+        try:
+            # Check if file exists
+            if not os.path.exists(backup_file):
+                logger.error(f"Backup file not found: {backup_file}")
+                return {
+                    "restorable": [],
+                    "problematic": [],
+                    "commands": []
+                }
+                
+            # Load backup file
+            with open(backup_file, 'r') as f:
+                backup_data = json.load(f)
+                
+            # Get config files
+            config_files = backup_data.get("config_files", [])
+            if not config_files:
+                logger.warning("No configuration files found in backup")
+                return {
+                    "restorable": [],
+                    "problematic": [],
+                    "commands": []
+                }
+                
+            logger.info(f"Found {len(config_files)} configuration files to analyze")
+            
+            # Categorize config files
+            restorable_configs = []
+            problematic_configs = []
+            restoration_commands = []
+            
+            # Check each config file
+            for cfg in config_files:
+                path = cfg.get("path", "")
+                
+                # Skip certain problematic files by default
+                if self._is_problematic_config(path):
+                    cfg["issue"] = "Potentially problematic configuration (permission issues, hardware-specific, etc.)"
+                    problematic_configs.append(cfg)
+                    continue
+                
+                # Check if target directory exists and is writable
+                target_dir = os.path.dirname(os.path.expanduser(path))
+                if not os.path.exists(target_dir):
+                    # Directory doesn't exist
+                    cfg["issue"] = f"Target directory does not exist: {target_dir}"
+                    problematic_configs.append(cfg)
+                    restoration_commands.append(f"mkdir -p {target_dir}")
+                elif not os.access(target_dir, os.W_OK):
+                    # Directory exists but is not writable
+                    cfg["issue"] = f"Target directory not writable: {target_dir}"
+                    problematic_configs.append(cfg)
+                    restoration_commands.append(f"sudo chmod u+w {target_dir}")
+                else:
+                    # Directory exists and is writable
+                    restorable_configs.append(cfg)
+                    
+                    # Add to restoration commands (would just be a copy operation in reality)
+                    restoration_commands.append(f"cp {cfg.get('source_path', 'backup/' + path)} {path}")
+            
+            # Create and return the plan
+            plan = {
+                "restorable": restorable_configs,
+                "problematic": problematic_configs,
+                "commands": restoration_commands
+            }
+            
+            return plan
+            
+        except Exception as e:
+            logger.error(f"Error generating config restoration plan: {e}")
+            return {
+                "restorable": [],
+                "problematic": [],
+                "commands": []
+            }
+    
+    def _is_problematic_config(self, path: str) -> bool:
+        """Check if a config file path might be problematic to restore
+        
+        Args:
+            path: Path to check
+            
+        Returns:
+            True if potentially problematic, False otherwise
+        """
+        # List of potentially problematic paths or patterns
+        problematic_patterns = [
+            # Hardware-specific configs
+            "/etc/X11/xorg.conf",
+            "/etc/modprobe.d/",
+            # System-critical configs that should be handled carefully
+            "/etc/fstab",
+            "/etc/crypttab",
+            "/etc/shadow",
+            "/etc/passwd",
+            # Permission-sensitive files
+            "/.ssh/id_",
+            "/.gnupg/",
+            # Cache files that shouldn't be restored
+            "/.cache/",
+        ]
+        
+        # Check if path matches any problematic pattern
+        for pattern in problematic_patterns:
+            if pattern in path:
+                return True
+                
+        return False
+
     def execute_installation_plan(self, backup_file: str, version_policy: str = 'prefer-newer', 
                                  allow_downgrade: bool = False) -> bool:
         """Execute package installation plan from backup
@@ -1286,8 +1514,7 @@ class Migrator:
             config_files = backup_data.get("config_files", [])
             if not config_files:
                 logger.warning("No configuration files found in backup")
-                print("No configuration files found to restore")
-                return True
+                return False
                 
             logger.info(f"Found {len(config_files)} configuration files to restore")
             print(f"Restoring {len(config_files)} configuration files...")

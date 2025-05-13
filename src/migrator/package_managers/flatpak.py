@@ -319,4 +319,79 @@ class FlatpakPackageManager(PackageManager):
     def is_user_installed(self, package_name: str) -> bool:
         """Check if a flatpak package was explicitly installed by the user"""
         # All flatpak packages are considered user-installed
-        return self.get_installed_version(package_name) is not None 
+        return self.get_installed_version(package_name) is not None
+        
+    def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
+        """Plan package installation without executing it
+        
+        Args:
+            packages: List of package dictionaries from backup
+            
+        Returns:
+            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+        """
+        available_packages = []
+        unavailable_packages = []
+        upgradable_packages = []
+        commands = []
+        
+        if not self.available:
+            # If flatpak is not available, all packages are considered unavailable
+            for pkg in packages:
+                pkg_copy = pkg.copy()
+                pkg_copy['reason'] = 'Flatpak package manager not available on this system'
+                unavailable_packages.append(pkg_copy)
+            return available_packages, unavailable_packages, upgradable_packages, commands
+        
+        # Calculate total for progress reporting
+        total = len(packages)
+        logger.info(f"Planning installation for {total} Flatpak packages")
+        
+        # Add a note about Flatpak version handling at the beginning of commands
+        commands.append("# Note: Flatpak always installs the latest version available")
+        commands.append("# Specific versions requested in the backup will be ignored")
+        
+        for i, pkg in enumerate(packages):
+            name = pkg.get('name', '')
+            version = pkg.get('version', '')
+            
+            # Skip if name is missing
+            if not name:
+                continue
+            
+            # Check if package is available
+            if self.is_package_available(name):
+                # For flatpak, we always install the latest version
+                # Try to get the latest version for informational purposes
+                latest = self.get_latest_version(name)
+                
+                if version and latest and version != latest:
+                    # Original version is different from what will be installed
+                    pkg_copy = pkg.copy()
+                    pkg_copy['available_version'] = latest
+                    upgradable_packages.append(pkg_copy)
+                    commands.append(f"flatpak install -y {name}  # Requested: {version}, Will install: {latest}")
+                else:
+                    # Either no specific version requested or latest version matches requested version
+                    pkg_copy = pkg.copy()
+                    if latest:
+                        pkg_copy['available_version'] = latest
+                    available_packages.append(pkg_copy)
+                    commands.append(f"flatpak install -y {name}" + (f"  # Will install version {latest}" if latest else ""))
+            else:
+                # Package not available
+                pkg_copy = pkg.copy()
+                pkg_copy['reason'] = 'Package not available in configured Flatpak remotes'
+                unavailable_packages.append(pkg_copy)
+                
+                # Check if we can extract remote info from the name
+                if '/' in name:
+                    parts = name.split('/', 1)
+                    commands.append(f"# To restore {name}, you may need to add the remote {parts[0]} first")
+                    commands.append(f"# flatpak remote-add {parts[0]} <REMOTE_URL>")
+            
+            # Report progress periodically
+            if (i+1) % 5 == 0 or (i+1) == total:
+                logger.info(f"Planning progress: {i+1}/{total} Flatpak packages processed")
+        
+        return available_packages, unavailable_packages, upgradable_packages, commands 

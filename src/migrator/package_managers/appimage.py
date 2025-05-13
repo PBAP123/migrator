@@ -231,4 +231,86 @@ class AppImageManager(PackageManager):
         
         All AppImages are considered manually installed.
         """
-        return self.get_appimage_path(package_name) is not None 
+        return self.get_appimage_path(package_name) is not None
+        
+    def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
+        """Plan package installation without executing it
+        
+        Args:
+            packages: List of package dictionaries from backup
+            
+        Returns:
+            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+        """
+        available_packages = []
+        unavailable_packages = []
+        upgradable_packages = []
+        commands = []
+        
+        # Add note about AppImage manual installation
+        commands.append("# NOTE: AppImages must be manually downloaded and installed.")
+        commands.append("# The following AppImages were found in your backup:")
+        
+        # Calculate total for progress reporting
+        total = len(packages)
+        logger.info(f"Planning installation for {total} AppImage packages")
+        
+        # Get currently installed AppImages for comparison
+        installed_appimages = self.list_installed_packages()
+        installed_names = {pkg.name: pkg for pkg in installed_appimages}
+        
+        for i, pkg in enumerate(packages):
+            name = pkg.get('name', '')
+            version = pkg.get('version', '')
+            
+            # Skip if name is missing
+            if not name:
+                continue
+                
+            # Create a note for manual installation
+            commands.append(f"# AppImage: {name} (version: {version})")
+            
+            if name in installed_names:
+                # AppImage is already installed
+                current_version = installed_names[name].version
+                
+                if version and current_version and version != current_version:
+                    # Different version is installed
+                    pkg_copy = pkg.copy()
+                    pkg_copy['available_version'] = current_version
+                    upgradable_packages.append(pkg_copy)
+                    commands.append(f"# Already installed but different version: {current_version}")
+                    commands.append(f"# Path: {self.get_appimage_path(name)}")
+                else:
+                    # Same version is installed
+                    available_packages.append(pkg)
+                    commands.append(f"# Already installed at: {self.get_appimage_path(name)}")
+            else:
+                # AppImage is not installed
+                pkg_copy = pkg.copy()
+                pkg_copy['reason'] = 'AppImage must be manually downloaded'
+                unavailable_packages.append(pkg_copy)
+                
+                # Add suggestions for common AppImages if we can recognize them
+                if "libreoffice" in name.lower():
+                    commands.append("# LibreOffice AppImage can be downloaded from: https://www.libreoffice.org/download/appimage/")
+                elif "gimp" in name.lower():
+                    commands.append("# GIMP AppImage can be downloaded from: https://www.gimp.org/downloads/")
+                elif "krita" in name.lower():
+                    commands.append("# Krita AppImage can be downloaded from: https://krita.org/en/download/")
+                elif "kdenlive" in name.lower():
+                    commands.append("# Kdenlive AppImage can be downloaded from: https://kdenlive.org/en/download/")
+                elif "glimpse" in name.lower():
+                    commands.append("# Glimpse AppImage can be downloaded from: https://glimpse-editor.github.io/downloads/")
+                else:
+                    commands.append("# Search for this AppImage on AppImageHub: https://appimage.github.io/apps/")
+                
+                # Add general installation instructions
+                commands.append("# After downloading, make executable: chmod +x path/to/downloaded.AppImage")
+                commands.append("# And move to appropriate location: mv path/to/downloaded.AppImage ~/Applications/")
+            
+            # Report progress periodically
+            if (i+1) % 5 == 0 or (i+1) == total:
+                logger.info(f"Planning progress: {i+1}/{total} AppImage packages processed")
+                
+        return available_packages, unavailable_packages, upgradable_packages, commands 

@@ -229,26 +229,35 @@ When setting up a new system:
 # Step 2: Find your backup file (scans drives automatically)
 migrator locate-backup
 
-# Step 3: Preview what will be restored (recommended)
+# Step 3: Generate an installation plan (recommended before restoring)
+migrator plan PATH_TO_YOUR_BACKUP.json
+
+# Step 4: Preview what will be restored (recommended)
 migrator restore PATH_TO_YOUR_BACKUP.json --dry-run
 
-# Step 4: Perform the actual restoration
+# Step 5: Perform the actual restoration
 migrator restore PATH_TO_YOUR_BACKUP.json --execute
 ```
 
-When using `--execute` without specific category flags, Migrator will enter interactive mode and prompt you about each category of content to restore. This gives you fine-grained control over the restore process without having to remember all the command line options.
+#### Using the Plan Function
 
-For more control over the restoration process using command-line arguments:
+The `plan` function is an essential step before performing a restoration, especially when migrating between different Linux distributions:
+
 ```bash
-# Restore only packages
-migrator restore backup.json --execute --packages-only
-
-# Restore only configuration files
-migrator restore backup.json --execute --configs-only
-
-# Restore with specific version handling
-migrator restore backup.json --execute --version-policy=prefer-newer
+# Generate a detailed installation plan
+migrator plan PATH_TO_YOUR_BACKUP.json
 ```
+
+This command:
+- Maps packages from your source distribution to the target distribution
+- Creates a detailed plan for installing compatible packages
+- Identifies packages that may need to be manually handled
+- Recommends equivalent packages when direct matches aren't available
+- Helps you understand what will happen during the actual restoration
+
+Use the plan function before restoring to ensure you have a clear understanding of how packages will be mapped and installed on your new system. This is particularly valuable when migrating between different package managers (e.g., from apt to dnf).
+
+When using `--execute` without specific category flags, Migrator will enter interactive mode and prompt you about each category of content to restore. This gives you fine-grained control over the restore process without having to remember all the command line options.
 
 ### Comparing Systems
 
@@ -258,6 +267,55 @@ To see what's changed between your current system and a backup:
 # Compare current system with a backup
 migrator compare PATH_TO_YOUR_BACKUP.json
 ```
+
+### Using Plan vs Compare
+
+#### Understanding the Difference
+
+Migrator offers two powerful analysis tools that serve different purposes in your migration workflow:
+
+**Compare Function (`migrator compare`):**
+- Shows differences between your current system state and a backup
+- Identifies packages and config files that have been added or removed since the backup
+- Best used when you want to assess how your current system has changed over time
+- Helpful for identifying drift between systems or tracking changes since a backup was made
+- Focuses on what changed rather than what needs to be installed
+
+**Plan Function (`migrator plan`):**
+- Generates a detailed installation plan from a backup
+- Maps packages from source distribution to target distribution
+- Best used before performing a restoration to understand what will happen
+- Creates a roadmap for migration, especially between different Linux distributions
+- Focuses specifically on installation strategy, package mapping, and compatibility
+
+#### When to Use Each Tool
+
+Use **Compare** when you want to:
+- Audit changes between your current system and a previous state
+- Find out what packages or configs were added or removed
+- Identify system drift from a baseline
+- Track changes over time with regular comparisons
+
+Use **Plan** when you want to:
+- Prepare for a migration or restoration
+- Understand how packages will map between distributions
+- See what installation commands will be run
+- Identify potential compatibility issues before they occur
+- Create a roadmap for migration between different systems
+
+#### Best Practices
+
+1. **Before a restore operation:**
+   - Run `migrator plan` to get a detailed roadmap for installation
+   - Review the plan to understand how packages will be mapped
+
+2. **After a restoration:**
+   - Use `migrator compare` to verify the restoration matched expectations
+   - Identify any remaining differences between systems
+
+3. **For ongoing system management:**
+   - Run regular `migrator compare` operations against a baseline backup
+   - Track system changes and drift over time
 
 ### Setting Up as a Service
 

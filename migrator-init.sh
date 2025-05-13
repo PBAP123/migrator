@@ -427,10 +427,11 @@ show_menu() {
         echo "2) backup         - Create a backup of your system"
         echo "3) restore        - Restore from a backup"
         echo "4) compare        - Compare current system with a backup"
-        echo "5) check          - Check for changes since last scan"
-        echo "6) service        - Manage Migrator service"
-        echo "7) setup          - Run the interactive setup wizard"
-        echo "8) help           - Show detailed help"
+        echo "5) plan           - Generate an installation plan from a backup"
+        echo "6) check          - Check for changes since last scan"
+        echo "7) service        - Manage Migrator service"
+        echo "8) setup          - Run the interactive setup wizard"
+        echo "9) help           - Show detailed help"
         echo "q) quit           - Exit the menu"
         echo
         
@@ -453,19 +454,23 @@ show_menu() {
                 clear
                 run_migrator_command "compare"
                 ;;
-            5|check)
+            5|plan)
+                clear
+                run_migrator_command "plan"
+                ;;
+            6|check)
                 clear
                 run_migrator_command "check"
                 ;;
-            6|service)
+            7|service)
                 clear
                 run_migrator_command "service"
                 ;;
-            7|setup)
+            8|setup)
                 clear
                 run_migrator_command "setup"
                 ;;
-            8|help)
+            9|help)
                 clear
                 run_migrator_command "help"
                 ;;
@@ -492,6 +497,29 @@ run_migrator_command() {
     # Special handling for commands that need additional arguments
     if [ "$command" = "compare" ]; then
         echo "The compare command requires a backup file path."
+        read -p "Enter the path to your backup file: " backup_path
+        
+        if [ -z "$backup_path" ]; then
+            print_error "No backup file specified. Operation cancelled."
+            read -p "Press Enter to continue..." _
+            return
+        fi
+        
+        if [ ! -f "$backup_path" ]; then
+            print_error "The specified file does not exist: $backup_path"
+            read -p "Press Enter to continue..." _
+            return
+        fi
+        
+        # Run the migrator command with the backup file path
+        if [ -x "$DEFAULT_VENV_PATH/bin/migrator" ]; then
+            "$DEFAULT_VENV_PATH/bin/migrator" "$command" "$backup_path" "$@"
+        else
+            # This is the fallback if the bin/migrator script doesn't exist
+            python -m migrator "$command" "$backup_path" "$@"
+        fi
+    elif [ "$command" = "plan" ]; then
+        echo "The plan command requires a backup file path."
         read -p "Enter the path to your backup file: " backup_path
         
         if [ -z "$backup_path" ]; then
