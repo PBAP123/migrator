@@ -8,7 +8,7 @@ import json
 import os
 import logging
 import shutil
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 
 from .base import PackageManager, Package
@@ -51,19 +51,33 @@ class FlatpakPackageManager(PackageManager):
                 print("No Flatpak packages installed")
                 return []
                 
-            # Get list of installed flatpaks
+            # Get list of installed flatpaks with application ID, name and version
             print("Getting list of installed Flatpak packages...")
-            list_cmd = ['flatpak', 'list', '--app', '--columns=application,version,installation,branch', '--show-details']
+            list_cmd = ['flatpak', 'list', '--app', '--columns=application,name,version']
             result = subprocess.run(list_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
             
-            # Parse output
+            # Parse output to extract application IDs, display names, and versions
             flatpaks = []
-            for line in result.stdout.strip().splitlines()[1:]:  # Skip header
-                parts = line.split()
-                if len(parts) >= 2:
+            lines = result.stdout.strip().splitlines()
+            if len(lines) <= 1:  # If we only have the header or empty output
+                return []
+                
+            for line_idx in range(1, len(lines)):  # Skip header
+                line = lines[line_idx]
+                # Parse the line - app_id, display_name, version
+                parts = self._parse_flatpak_list_line(line)
+                
+                if len(parts) >= 3:
+                    app_id = parts[0]  # First part is always the app ID
+                    display_name = parts[1]  # Second part is display name
+                    version = parts[2]  # Third part is version
+                    
+                    logger.debug(f"Parsed Flatpak: ID={app_id}, Name={display_name}, Version={version}")
+                    
                     flatpaks.append({
-                        'application': parts[0],
-                        'version': parts[1] if len(parts) > 1 else ''
+                        'app_id': app_id,
+                        'display_name': display_name,
+                        'version': version
                     })
             
             # Limit in test mode
@@ -77,16 +91,19 @@ class FlatpakPackageManager(PackageManager):
             
             # Process each flatpak
             for i, flatpak in enumerate(flatpaks):
-                app_id = flatpak.get('application', '')
+                app_id = flatpak.get('app_id', '')
+                display_name = flatpak.get('display_name', '')
                 version = flatpak.get('version', '')
                 
                 progress_pct = ((i + 1) / total_pkgs) * 100
                 print(f"\rProcessing Flatpak packages: {i+1}/{total_pkgs} ({progress_pct:.1f}%)      ", end="", flush=True)
                 
-                # Basic info only for faster processing
+                # IMPORTANT: Store the APPLICATION ID as the name
+                # This is the key to fixing the lookup issues
                 packages.append(Package(
-                    name=app_id,
+                    name=app_id,  # This is the APPLICATION ID, not the display name
                     version=version,
+                    description=f"Display name: {display_name}",
                     source='flatpak',
                     manually_installed=True  # All flatpaks are manually installed
                 ))
@@ -94,6 +111,7 @@ class FlatpakPackageManager(PackageManager):
             if total_pkgs > 0:
                 print(f"\rCompleted processing {total_pkgs} Flatpak packages             ")
             
+            logger.info(f"Completed processing {total_pkgs} Flatpak packages")
             return packages
             
         except subprocess.SubprocessError as e:
@@ -101,26 +119,105 @@ class FlatpakPackageManager(PackageManager):
             print(f"Failed to list Flatpak packages: {str(e)}")
             return []
     
+    def _parse_flatpak_list_line(self, line: str) -> List[str]:
+        """Parse a line from flatpak list output to handle multiword app names correctly.
+        
+        Example line: 'com.github.KRTirtho.Spotube  Spotube  v4.0.2'
+        Should return: ['com.github.KRTirtho.Spotube', 'Spotube', 'v4.0.2']
+        
+        For lines with multiword names like:
+        'org.onlyoffice.desktopeditors  ONLYOFFICE Desktop Editors  8.3.3'
+        Should return: ['org.onlyoffice.desktopeditors', 'ONLYOFFICE Desktop Editors', '8.3.3']
+        """
+        parts = line.strip().split()
+        if len(parts) < 3:
+            # Not enough parts
+            return parts
+            
+        # First part is always the application ID
+        app_id = parts[0]
+        
+        # Last part is always the version
+        version = parts[-1]
+        
+        # Everything in between is the display name
+        display_name = ' '.join(parts[1:-1])
+        
+        return [app_id, display_name, version]
+    
     def is_package_available(self, package_name: str) -> bool:
         """Check if a flatpak package is available in the configured remotes"""
         if not self.available:
             return False
         
         try:
+            # Log what we're searching for
+            logger.info(f"Checking flatpak availability for: {package_name}")
+            
+            # Check if package_name is an application ID (contains dots)
+            is_app_id = '.' in package_name
+            
+            # First try a direct search with exact matching
             cmd = ['flatpak', 'search', '--columns=application', package_name]
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
             
-            if result.returncode != 0:
-                return False
-                
-            # Check if the exact package ID is in the results
-            for line in result.stdout.splitlines():
-                if line.strip() == package_name:
-                    return True
-                    
-            return False
+            if result.returncode == 0:
+                # This command returns a header line followed by application IDs
+                lines = result.stdout.strip().split('\n')
+                if len(lines) > 1:  # There's at least one result
+                    # If we're searching with an app ID, check for exact match
+                    if is_app_id:
+                        for line in lines[1:]:  # Skip header
+                            if line.strip() == package_name:
+                                return True
+                    else:
+                        # For a display name search, check if there's a matching application
+                        # Just having results is enough since we're searching by display name
+                        return len(lines) > 1
             
-        except subprocess.SubprocessError:
+            # If we're here and the package_name is an app ID that wasn't found,
+            # try one more search with just the app name part
+            if is_app_id and '.' in package_name:
+                # Get the app name part from the app ID (e.g., "Spotube" from "com.github.KRTirtho.Spotube")
+                name_parts = package_name.split('.')
+                if len(name_parts) > 1:
+                    app_name = name_parts[-1]
+                    cmd = ['flatpak', 'search', '--columns=application,name', app_name]
+                    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                    
+                    if result.returncode == 0:
+                        lines = result.stdout.strip().split('\n')
+                        if len(lines) > 1:  # There's at least one result
+                            for line in lines[1:]:  # Skip header
+                                parts = line.split('\t')
+                                if len(parts) >= 1 and parts[0].strip() == package_name:
+                                    return True
+            
+            # If we're here and the package_name is a display name that wasn't found,
+            # try to find the app ID by searching for the display name
+            if not is_app_id:
+                # Try a more complex search with both columns
+                cmd = ['flatpak', 'search', '--columns=application,name', package_name]
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    if len(lines) > 1:  # There's at least one result
+                        for line in lines[1:]:  # Skip header
+                            parts = line.split('\t')
+                            if len(parts) >= 2:
+                                app_id = parts[0].strip()
+                                name = parts[1].strip()
+                                # Check if the display name is part of the name field
+                                if package_name.lower() in name.lower():
+                                    logger.info(f"Found matching app ID {app_id} for display name {package_name}")
+                                    return True
+            
+            # If we got here, the package is not available
+            logger.info(f"Package {package_name} not found in any flatpak remote")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking flatpak package availability: {e}")
             return False
     
     def get_package_info(self, package_name: str) -> Optional[Package]:
@@ -142,6 +239,7 @@ class FlatpakPackageManager(PackageManager):
             # Initialize with defaults
             version = ''
             description = ''
+            display_name = ''
             install_date = None
             
             for line in info_lines:
@@ -152,6 +250,9 @@ class FlatpakPackageManager(PackageManager):
                 
                 elif line.startswith('Description:'):
                     description = line.split('Description:', 1)[1].strip()
+                
+                elif line.startswith('Name:'):
+                    display_name = line.split('Name:', 1)[1].strip()
                 
                 # Flatpak doesn't provide install date in the info command
             
@@ -169,9 +270,13 @@ class FlatpakPackageManager(PackageManager):
             except Exception as e:
                 logger.warning(f"Could not determine flatpak install date: {e}")
             
+            # Update description to include display name if available
+            if display_name:
+                description = f"Display name: {display_name}" + (f", {description}" if description else "")
+            
             # All flatpak packages are considered manually installed
             return Package(
-                name=package_name,
+                name=package_name,  # Use application ID as the name
                 version=version,
                 description=description,
                 source='flatpak',
@@ -321,77 +426,179 @@ class FlatpakPackageManager(PackageManager):
         # All flatpak packages are considered user-installed
         return self.get_installed_version(package_name) is not None
         
-    def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
-        """Plan package installation without executing it
+    def get_app_id_for_display_name(self, display_name: str) -> Optional[str]:
+        """
+        Try to find the application ID for a display name
         
         Args:
-            packages: List of package dictionaries from backup
+            display_name: The display name of the application
             
         Returns:
-            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+            The application ID if found, None otherwise
         """
-        available_packages = []
-        unavailable_packages = []
-        upgradable_packages = []
-        commands = []
+        # Don't try empty display names
+        if not display_name:
+            return None
+            
+        # First try exact matching with direct search
+        cmd = ['flatpak', 'search', '--columns=application,name', display_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
         
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')
+            if len(lines) > 1:  # We have at least header + one result
+                # Extract app IDs and display names
+                app_ids = []
+                for line in lines[1:]:  # Skip header
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        app_id = parts[0].strip()
+                        name = parts[1].strip()
+                        
+                        # Check for exact match (case insensitive)
+                        if display_name.lower() == name.lower():
+                            logger.info(f"Found exact match: {app_id} for {display_name}")
+                            return app_id
+                        
+                        # Save all potential matches
+                        app_ids.append((app_id, name))
+                
+                # If no exact match but we have app IDs, use the first one as a good candidate
+                if app_ids and len(app_ids) == 1:
+                    app_id, name = app_ids[0]
+                    logger.info(f"Using best match: {app_id} for {display_name}")
+                    return app_id
+                
+                # For multiple candidates, check for closest match
+                for app_id, name in app_ids:
+                    # Check if the display name is contained in the app name (case insensitive)
+                    if display_name.lower() in name.lower():
+                        logger.info(f"Found partial match: {app_id} for {display_name}")
+                        return app_id
+        
+        # If we're still here, try direct lookup for common apps
+        common_apps = {
+            "spotify": "com.spotify.Client",
+            "flatseal": "com.github.tchx84.Flatseal",
+            "heroic": "com.heroicgameslauncher.hgl",
+            "spotube": "com.github.KRTirtho.Spotube"
+        }
+        
+        # Check if the display name matches a common app (case insensitive)
+        for common_name, common_id in common_apps.items():
+            if display_name.lower() == common_name.lower():
+                # Verify this app ID exists
+                cmd = ['flatpak', 'info', common_id]
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                if result.returncode == 0:
+                    logger.info(f"Found common app: {common_id} for {display_name}")
+                    return common_id
+        
+        # If we're still here, try some common application prefixes
+        common_prefixes = [
+            "com.github.",
+            "org.gnome.",
+            "com.",
+            "org.",
+            "io.",
+        ]
+        
+        # Try known Flatpak app naming patterns
+        for prefix in common_prefixes:
+            app_id_candidate = f"{prefix}{display_name}"
+            cmd = ['flatpak', 'info', app_id_candidate]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            if result.returncode == 0:
+                logger.info(f"Found app ID using pattern matching: {app_id_candidate}")
+                return app_id_candidate
+        
+        # If we got here, we couldn't find a matching app ID
+        logger.info(f"Could not find app ID for display name: {display_name}")
+        return None
+
+    def plan_installation(self, packages: List[Dict[str, Any]]) -> Dict[str, List]:
+        """
+        Generate an installation plan for Flatpak packages
+        
+        Args:
+            packages: List of packages to install
+            
+        Returns:
+            Dict with available, unavailable, upgradable packages and installation commands
+        """
         if not self.available:
-            # If flatpak is not available, all packages are considered unavailable
-            for pkg in packages:
-                pkg_copy = pkg.copy()
-                pkg_copy['reason'] = 'Flatpak package manager not available on this system'
-                unavailable_packages.append(pkg_copy)
-            return available_packages, unavailable_packages, upgradable_packages, commands
+            return {
+                "available": [],
+                "unavailable": packages,
+                "upgradable": [],
+                "installation_commands": []
+            }
+        
+        available = []
+        unavailable = []
+        upgradable = []
+        commands = []
+        app_id_map = {}  # Map display names to app IDs
         
         # Calculate total for progress reporting
         total = len(packages)
         logger.info(f"Planning installation for {total} Flatpak packages")
         
-        # Add a note about Flatpak version handling at the beginning of commands
-        commands.append("# Note: Flatpak always installs the latest version available")
-        commands.append("# Specific versions requested in the backup will be ignored")
-        
+        # Process packages
         for i, pkg in enumerate(packages):
             name = pkg.get('name', '')
             version = pkg.get('version', '')
             
             # Skip if name is missing
             if not name:
+                unavailable.append(pkg)
                 continue
-            
-            # Check if package is available
-            if self.is_package_available(name):
-                # For flatpak, we always install the latest version
-                # Try to get the latest version for informational purposes
-                latest = self.get_latest_version(name)
                 
-                if version and latest and version != latest:
-                    # Original version is different from what will be installed
-                    pkg_copy = pkg.copy()
-                    pkg_copy['available_version'] = latest
-                    upgradable_packages.append(pkg_copy)
-                    commands.append(f"flatpak install -y {name}  # Requested: {version}, Will install: {latest}")
+            # Check if this is already an app ID
+            is_app_id = '.' in name
+            if is_app_id:
+                if self.is_package_available(name):
+                    available.append(pkg)
+                    # Add to install command
+                    cmd = f"flatpak install -y {name}  # Will install latest version"
+                    if cmd not in commands:
+                        commands.append(cmd)
                 else:
-                    # Either no specific version requested or latest version matches requested version
-                    pkg_copy = pkg.copy()
-                    if latest:
-                        pkg_copy['available_version'] = latest
-                    available_packages.append(pkg_copy)
-                    commands.append(f"flatpak install -y {name}" + (f"  # Will install version {latest}" if latest else ""))
+                    unavailable.append(pkg)
             else:
-                # Package not available
-                pkg_copy = pkg.copy()
-                pkg_copy['reason'] = 'Package not available in configured Flatpak remotes'
-                unavailable_packages.append(pkg_copy)
+                # This is a display name - try to find the corresponding app ID
+                app_id = self.get_app_id_for_display_name(name)
                 
-                # Check if we can extract remote info from the name
-                if '/' in name:
-                    parts = name.split('/', 1)
-                    commands.append(f"# To restore {name}, you may need to add the remote {parts[0]} first")
-                    commands.append(f"# flatpak remote-add {parts[0]} <REMOTE_URL>")
+                if app_id:
+                    # We found a matching app ID
+                    app_id_map[name] = app_id
+                    
+                    # Create a new package entry with the app ID
+                    new_pkg = pkg.copy()
+                    new_pkg['name'] = app_id
+                    new_pkg['original_name'] = name
+                    available.append(new_pkg)
+                    
+                    # Add to install command
+                    cmd = f"flatpak install -y {app_id}  # {name}, Will install latest version"
+                    if cmd not in commands:
+                        commands.append(cmd)
+                else:
+                    # No matching app ID found
+                    unavailable.append(pkg)
             
             # Report progress periodically
             if (i+1) % 5 == 0 or (i+1) == total:
                 logger.info(f"Planning progress: {i+1}/{total} Flatpak packages processed")
         
-        return available_packages, unavailable_packages, upgradable_packages, commands 
+        # Add a note about flatpak version handling
+        if commands:
+            commands.insert(0, "# Note: Flatpak always installs the latest version available")
+            commands.insert(1, "# Specific versions requested in the backup will be ignored")
+        
+        return {
+            "available": available,
+            "unavailable": unavailable,
+            "upgradable": upgradable,
+            "installation_commands": commands
+        } 
