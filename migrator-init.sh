@@ -170,6 +170,71 @@ update_migrator() {
     print_success "Migrator updated successfully!"
 }
 
+# Uninstall Migrator (without removing repository or backups)
+uninstall_migrator() {
+    print_header "Uninstalling Migrator"
+    echo "This will remove the virtual environment and wrapper scripts but keep your repository and backups."
+    
+    read -p "Are you sure you want to uninstall Migrator? (y/n) " choice
+    if [[ ! $choice =~ ^[Yy]$ ]]; then
+        echo "Uninstall cancelled."
+        return
+    fi
+    
+    # Check for and remove systemd services if they exist
+    echo "Checking for systemd services..."
+    if systemctl --user status migrator &>/dev/null; then
+        echo "User-level systemd service found. Removing..."
+        systemctl --user stop migrator &>/dev/null || true
+        systemctl --user disable migrator &>/dev/null || true
+        rm -f "$HOME/.config/systemd/user/migrator.service" "$HOME/.config/systemd/user/migrator.timer" 2>/dev/null || true
+        systemctl --user daemon-reload
+        print_success "User-level systemd service removed"
+    fi
+    
+    if command -v sudo &>/dev/null && sudo systemctl status migrator &>/dev/null; then
+        echo "System-level systemd service found. Removing..."
+        sudo systemctl stop migrator &>/dev/null || true
+        sudo systemctl disable migrator &>/dev/null || true
+        sudo rm -f "/etc/systemd/system/migrator.service" "/etc/systemd/system/migrator.timer" 2>/dev/null || true
+        sudo systemctl daemon-reload
+        print_success "System-level systemd service removed"
+    fi
+    
+    echo "Removing virtual environment at $DEFAULT_VENV_PATH..."
+    if [ -d "$DEFAULT_VENV_PATH" ]; then
+        rm -rf "$DEFAULT_VENV_PATH"
+        print_success "Virtual environment removed successfully"
+    else
+        print_warning "Virtual environment not found at $DEFAULT_VENV_PATH"
+    fi
+    
+    echo "Removing wrapper scripts..."
+    if [ -f "$WRAPPER_PATH" ]; then
+        rm -f "$WRAPPER_PATH"
+        print_success "Wrapper script removed successfully"
+    else
+        print_warning "Wrapper script not found at $WRAPPER_PATH"
+    fi
+    
+    echo "Cleaning up configuration files..."
+    # Remove config and state files but NOT backups
+    if [ -d "$HOME/.config/migrator" ]; then
+        rm -rf "$HOME/.config/migrator"
+        print_success "Configuration files removed"
+    fi
+    
+    if [ -d "$HOME/.local/share/migrator" ]; then
+        rm -rf "$HOME/.local/share/migrator"
+        print_success "State files removed"
+    fi
+    
+    print_success "Migrator has been uninstalled, but your repository at $PROJECT_DIR and any backups you created have been preserved."
+    echo "If you want to completely remove Migrator, you can also delete:"
+    echo "1. The repository directory at $PROJECT_DIR"
+    echo "2. Your backup files (default location: ~/migrator_backups)"
+}
+
 # Check for required system packages and suggest installation
 check_system_packages() {
     MISSING_PACKAGES=""
@@ -502,6 +567,7 @@ print_help() {
     echo "  install               - Install Migrator"
     echo "  update                - Update Migrator to the latest version"
     echo "  clean                 - Perform a clean installation (removes existing venv)"
+    echo "  uninstall             - Uninstall Migrator (keeps repository and backups)"
     echo "  diagnostic            - Show diagnostic information"
     echo "  version               - Show version information"
     echo
@@ -511,6 +577,7 @@ print_help() {
     echo "  $0                    - Show interactive menu"
     echo "  $0 install            - Install Migrator"
     echo "  $0 update             - Update Migrator"
+    echo "  $0 uninstall          - Uninstall Migrator"
     echo "  $0 help               - Show this help message"
     echo
 }
@@ -536,6 +603,9 @@ if [ $# -gt 0 ]; then
             check_system_packages
             ensure_virtualenv
             install_migrator
+            ;;
+        uninstall)
+            uninstall_migrator
             ;;
         diagnostic)
             show_diagnostics
@@ -609,9 +679,10 @@ else
         echo "2) Update Migrator"
         echo "3) Clean installation (remove existing venv and reinstall)"
         echo "4) Diagnostic information"
-        echo "5) Exit"
+        echo "5) Uninstall Migrator"
+        echo "6) Exit"
         
-        read -p "Enter your choice (1-5): " choice
+        read -p "Enter your choice (1-6): " choice
         case $choice in
             1)
                 show_menu
@@ -629,6 +700,9 @@ else
                 show_diagnostics
                 ;;
             5)
+                uninstall_migrator
+                ;;
+            6)
                 exit 0
                 ;;
             *)
