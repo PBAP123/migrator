@@ -44,8 +44,8 @@ class Package:
         if data.get('install_date'):
             try:
                 install_date = datetime.fromisoformat(data['install_date'])
-            except ValueError:
-                logger.warning(f"Invalid install date format: {data['install_date']}")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid install date format: {data['install_date']} - {str(e)}")
         
         return cls(
             name=data.get('name', ''),

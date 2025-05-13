@@ -489,12 +489,61 @@ run_migrator_command() {
     # Ensure the virtual environment is active
     source "$DEFAULT_VENV_PATH/bin/activate"
     
-    # Run the migrator command
-    if [ -x "$DEFAULT_VENV_PATH/bin/migrator" ]; then
-        "$DEFAULT_VENV_PATH/bin/migrator" "$command" "$@"
+    # Special handling for commands that need additional arguments
+    if [ "$command" = "compare" ]; then
+        echo "The compare command requires a backup file path."
+        read -p "Enter the path to your backup file: " backup_path
+        
+        if [ -z "$backup_path" ]; then
+            print_error "No backup file specified. Operation cancelled."
+            read -p "Press Enter to continue..." _
+            return
+        fi
+        
+        if [ ! -f "$backup_path" ]; then
+            print_error "The specified file does not exist: $backup_path"
+            read -p "Press Enter to continue..." _
+            return
+        fi
+        
+        # Run the migrator command with the backup file path
+        if [ -x "$DEFAULT_VENV_PATH/bin/migrator" ]; then
+            "$DEFAULT_VENV_PATH/bin/migrator" "$command" "$backup_path" "$@"
+        else
+            # This is the fallback if the bin/migrator script doesn't exist
+            python -m migrator "$command" "$backup_path" "$@"
+        fi
+    elif [ "$command" = "restore" ]; then
+        echo "The restore command requires a backup file path."
+        read -p "Enter the path to your backup file: " backup_path
+        
+        if [ -z "$backup_path" ]; then
+            print_error "No backup file specified. Operation cancelled."
+            read -p "Press Enter to continue..." _
+            return
+        fi
+        
+        if [ ! -f "$backup_path" ]; then
+            print_error "The specified file does not exist: $backup_path"
+            read -p "Press Enter to continue..." _
+            return
+        fi
+        
+        # Run the migrator command with the backup file path
+        if [ -x "$DEFAULT_VENV_PATH/bin/migrator" ]; then
+            "$DEFAULT_VENV_PATH/bin/migrator" "$command" "$backup_path" "$@"
+        else
+            # This is the fallback if the bin/migrator script doesn't exist
+            python -m migrator "$command" "$backup_path" "$@"
+        fi
     else
-        # This is the fallback if the bin/migrator script doesn't exist
-        python -m migrator "$command" "$@"
+        # Run the migrator command
+        if [ -x "$DEFAULT_VENV_PATH/bin/migrator" ]; then
+            "$DEFAULT_VENV_PATH/bin/migrator" "$command" "$@"
+        else
+            # This is the fallback if the bin/migrator script doesn't exist
+            python -m migrator "$command" "$@"
+        fi
     fi
     
     # Wait for user to press Enter before returning to the menu

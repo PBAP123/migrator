@@ -97,6 +97,33 @@ class Migrator:
         # Initialize system variables
         self.system_variables = system_variables
         logger.info(f"Using system variables: username={self.system_variables.username}, home={self.system_variables.home_dir}")
+        
+        # Initialize empty lists for packages and config files
+        # These will be populated when system state is updated
+        self.installed_packages = []
+        self.config_files = []
+        
+        # Try to load existing data from state if available
+        if 'packages' in self.state and self.state['packages']:
+            # Packages in state are stored as dictionaries, so convert them to Package objects
+            try:
+                from .package_managers.base import Package
+                self.installed_packages = [Package.from_dict(pkg) for pkg in self.state['packages']]
+                logger.info(f"Loaded {len(self.installed_packages)} packages from state")
+            except Exception as e:
+                logger.warning(f"Could not load packages from state: {e}")
+        
+        if 'config_files' in self.state and self.state['config_files']:
+            # Config files in state are stored as dictionaries, so convert them to ConfigFile objects
+            try:
+                from .config_trackers.base import ConfigFile
+                self.config_files = [ConfigFile.from_dict(cfg) for cfg in self.state['config_files']]
+                logger.info(f"Loaded {len(self.config_files)} config files from state")
+            except Exception as e:
+                logger.warning(f"Could not load config files from state: {e}")
+                
+        # Initialize repository data
+        self.repo_sources = self.state.get('repositories', {'repositories': []})
     
     def _load_state(self) -> Dict[str, Any]:
         """Load the system state from disk or initialize a new one"""
@@ -1703,3 +1730,176 @@ class Migrator:
         except Exception as e:
             logger.error(f"Error scanning repositories: {e}")
             return {"repositories": [], "error": str(e)}
+
+    def compare_with_backup(self, backup_file: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Compare the current system with a backup file
+
+        Args:
+            backup_file: Path to the backup file to compare with
+
+        Returns:
+            Tuple containing (added_packages, removed_packages, added_configs, removed_configs)
+        """
+        logger.info(f"Comparing current system with backup {backup_file}")
+        
+        # Ensure we have current system data by checking if required attributes exist
+        if not hasattr(self, 'installed_packages') or not hasattr(self, 'config_files'):
+            logger.info("No current system scan data found, running a scan first...")
+            print("No current system scan data found, running a scan first...")
+            # Run a scan to initialize necessary attributes
+            self.update_system_state()
+        
+        # Load backup data
+        try:
+            with open(backup_file, 'r') as f:
+                backup_data = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Error loading backup file: {e}")
+            raise ValueError(f"Could not load backup file: {e}")
+            
+        # Extract package and config data from backup
+        backup_packages = backup_data.get('packages', [])
+        backup_configs = backup_data.get('config_files', [])
+        
+        # Convert to sets of identifiers for efficient comparison
+        # For packages, we create a set of (name, source) tuples
+        current_pkg_ids = {(pkg.name, pkg.source) for pkg in self.installed_packages}
+        backup_pkg_ids = {(pkg['name'], pkg['source']) for pkg in backup_packages}
+        
+        # For configs, we use the path as identifier
+        current_cfg_paths = {cfg.path for cfg in self.config_files}
+        backup_cfg_paths = {cfg['path'] for cfg in backup_configs}
+        
+        # Find differences
+        added_pkg_ids = current_pkg_ids - backup_pkg_ids
+        removed_pkg_ids = backup_pkg_ids - current_pkg_ids
+        
+        added_cfg_paths = current_cfg_paths - backup_cfg_paths
+        removed_cfg_paths = backup_cfg_paths - current_cfg_paths
+        
+        # Prepare detailed result lists
+        added_packages = []
+        for pkg in self.installed_packages:
+            if (pkg.name, pkg.source) in added_pkg_ids:
+                added_packages.append(pkg.to_dict())
+                
+        removed_packages = []
+        for pkg in backup_packages:
+            if (pkg['name'], pkg['source']) in removed_pkg_ids:
+                removed_packages.append(pkg)
+                
+        added_configs = []
+        for cfg in self.config_files:
+            if cfg.path in added_cfg_paths:
+                added_configs.append(cfg.to_dict())
+                
+        removed_configs = []
+        for cfg in backup_configs:
+            if cfg['path'] in removed_cfg_paths:
+                removed_configs.append(cfg)
+                
+        logger.info(f"Found {len(added_packages)} added packages, {len(removed_packages)} removed packages")
+        logger.info(f"Found {len(added_configs)} added config files, {len(removed_configs)} removed config files")
+        
+        return added_packages, removed_packages, added_configs, removed_configs
+
+    def execute_routine_check(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Execute a routine check for changes since the last scan
+        
+        Returns:
+            Tuple containing (changed_packages, changed_configs)
+        """
+        logger.info("Executing routine check for system changes")
+        
+        # Ensure we have current system data
+        if not hasattr(self, 'installed_packages') or not hasattr(self, 'config_files') or not self.installed_packages:
+            logger.info("No previous scan data found, running a scan first...")
+            # Run a scan to initialize necessary attributes
+            self.update_system_state()
+            # If this is the first scan, there are no changes to report
+            return [], []
+            
+        # Store the current packages and configs for comparison
+        old_packages = self.installed_packages
+        old_configs = self.config_files
+        
+        # Get the current packages and configs
+        logger.info("Scanning for current system state...")
+        current_packages = self.scan_packages()
+        current_configs = self.scan_config_files()
+        
+        # Compare packages
+        old_pkg_ids = {(pkg.name, pkg.source, pkg.version) for pkg in old_packages}
+        current_pkg_ids = {(pkg.name, pkg.source, pkg.version) for pkg in current_packages}
+        
+        changed_pkg_tuples = current_pkg_ids.symmetric_difference(old_pkg_ids)
+        
+        # Prepare detailed package changes
+        changed_packages = []
+        for pkg in current_packages:
+            if (pkg.name, pkg.source, pkg.version) in changed_pkg_tuples:
+                # Check if it's an upgrade
+                old_versions = [old_pkg.version for old_pkg in old_packages 
+                               if old_pkg.name == pkg.name and old_pkg.source == pkg.source]
+                
+                if old_versions:
+                    status = "upgraded" if pkg.version > old_versions[0] else "downgraded"
+                    old_version = old_versions[0]
+                else:
+                    status = "added"
+                    old_version = ""
+                
+                changed_packages.append({
+                    "name": pkg.name,
+                    "source": pkg.source,
+                    "version": pkg.version,
+                    "old_version": old_version,
+                    "status": status
+                })
+        
+        # Add removed packages
+        for pkg in old_packages:
+            if all((current_pkg.name != pkg.name or current_pkg.source != pkg.source)
+                  for current_pkg in current_packages):
+                changed_packages.append({
+                    "name": pkg.name,
+                    "source": pkg.source,
+                    "version": pkg.version,
+                    "status": "removed"
+                })
+        
+        # Compare config files
+        changed_configs = []
+        for cfg in current_configs:
+            # Find matching config in old_configs
+            old_cfg = next((old for old in old_configs if old.path == cfg.path), None)
+            
+            if old_cfg is None:
+                # New config file
+                changed_configs.append({
+                    "path": cfg.path,
+                    "status": "added"
+                })
+            elif cfg.checksum != old_cfg.checksum:
+                # Modified config file
+                changed_configs.append({
+                    "path": cfg.path,
+                    "status": "modified"
+                })
+        
+        # Look for removed config files
+        for old_cfg in old_configs:
+            if all(current_cfg.path != old_cfg.path for current_cfg in current_configs):
+                changed_configs.append({
+                    "path": old_cfg.path,
+                    "status": "removed"
+                })
+        
+        # Update the stored state with the current values
+        self.installed_packages = current_packages
+        self.config_files = current_configs
+        self._save_state()
+        
+        logger.info(f"Routine check complete: found {len(changed_packages)} changed packages and {len(changed_configs)} changed configs")
+        
+        return changed_packages, changed_configs

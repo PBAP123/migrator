@@ -106,11 +106,17 @@ class ConfigFile:
         if data.get('last_modified'):
             try:
                 last_modified = datetime.fromisoformat(data['last_modified'])
-            except ValueError:
-                logger.warning(f"Invalid last_modified date format: {data['last_modified']}")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid last_modified date format: {data['last_modified']} - {str(e)}")
         
+        # Get path with safeguards
+        path = data.get('path', '')
+        if not path:
+            logger.warning("ConfigFile dictionary missing required 'path' field")
+            path = '/dev/null'  # Use a default path that's unlikely to be useful but won't crash
+            
         return cls(
-            path=data.get('path', ''),
+            path=path,
             description=data.get('description', ''),
             category=data.get('category', ''),
             is_system_config=data.get('is_system_config', False),
