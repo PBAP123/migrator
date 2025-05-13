@@ -490,7 +490,12 @@ run_migrator_command() {
     source "$DEFAULT_VENV_PATH/bin/activate"
     
     # Run the migrator command
-    migrator "$command" "$@"
+    if [ -x "$DEFAULT_VENV_PATH/bin/migrator" ]; then
+        "$DEFAULT_VENV_PATH/bin/migrator" "$command" "$@"
+    else
+        # This is the fallback if the bin/migrator script doesn't exist
+        python -m migrator "$command" "$@"
+    fi
     
     # Wait for user to press Enter before returning to the menu
     echo
