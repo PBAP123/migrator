@@ -20,6 +20,27 @@ class SnapPackageManager(PackageManager):
     
     def __init__(self):
         super().__init__('snap')
+        # Log whether snap is available
+        logger.info(f"Snap package manager available: {self.available}")
+    
+    def _check_available(self) -> bool:
+        """Override the base method to check if snap is available"""
+        if not shutil.which('snap'):
+            logger.warning("Snap command not found in PATH")
+            return False
+        
+        try:
+            # Use a specific snap command instead of --version which isn't supported
+            cmd = ['snap', 'version']
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            available = result.returncode == 0
+            logger.info(f"Snap availability check: {available}, returncode={result.returncode}")
+            if not available:
+                logger.warning(f"Snap version check failed: {result.stderr.strip()}")
+            return available
+        except Exception as e:
+            logger.error(f"Error checking snap availability: {e}")
+            return False
     
     def list_installed_packages(self, test_mode=False) -> List[Package]:
         """List all installed snap packages
@@ -104,13 +125,58 @@ class SnapPackageManager(PackageManager):
     def is_package_available(self, package_name: str) -> bool:
         """Check if a snap package is available in the snap store"""
         if not self.available:
+            logger.warning(f"Snap package manager not available, cannot check if {package_name} is available")
             return False
         
         try:
+            # First check if package is already installed - in that case it's obviously available
+            installed_cmd = ['snap', 'list', package_name]
+            installed_result = subprocess.run(
+                installed_cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                text=True, 
+                check=False
+            )
+            
+            if installed_result.returncode == 0:
+                logger.info(f"Snap package {package_name} is already installed, considering available")
+                return True
+            
+            # If not installed, check in the store
             cmd = ['snap', 'info', package_name]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-            return result.returncode == 0 and 'publisher:' in result.stdout
-        except subprocess.SubprocessError:
+            logger.debug(f"Checking snap package availability: {' '.join(cmd)}")
+            result = subprocess.run(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                text=True, 
+                check=False,
+                timeout=10  # Add timeout to prevent hanging
+            )
+            
+            # Log full output for debugging
+            if result.returncode != 0:
+                logger.warning(f"Snap info failed for {package_name}: {result.stderr.strip()}")
+                
+            # Check if output contains expected store information
+            has_publisher = 'publisher:' in result.stdout
+            is_available = result.returncode == 0 and has_publisher
+            
+            if not is_available:
+                # Detailed debug info
+                if result.returncode == 0 and not has_publisher:
+                    logger.warning(f"Snap package {package_name} found but missing publisher info. Output: {result.stdout[:200]}...")
+                else:
+                    logger.warning(f"Snap package {package_name} not available. Return code: {result.returncode}")
+                    
+            return is_available
+            
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout checking snap package availability for {package_name}")
+            return False
+        except subprocess.SubprocessError as e:
+            logger.error(f"Error checking snap package availability: {e}")
             return False
     
     def get_package_info(self, package_name: str) -> Optional[Package]:
@@ -305,6 +371,7 @@ class SnapPackageManager(PackageManager):
         
         if not self.available:
             # If snap is not available, all packages are considered unavailable
+            logger.warning(f"Snap package manager not available, marking all {len(packages)} packages as unavailable")
             for pkg in packages:
                 pkg_copy = pkg.copy()
                 pkg_copy['reason'] = 'Snap package manager not available on this system'
@@ -334,6 +401,23 @@ class SnapPackageManager(PackageManager):
             # If we can't check, just ignore
             pass
         
+        # Get list of already installed packages to save time
+        installed_packages = {}
+        try:
+            list_cmd = ['snap', 'list']
+            list_result = subprocess.run(list_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            if list_result.returncode == 0:
+                # Parse the output, skipping header
+                for line in list_result.stdout.strip().splitlines()[1:]:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        name = parts[0]
+                        version = parts[1]
+                        installed_packages[name] = version
+                logger.info(f"Found {len(installed_packages)} already installed snap packages")
+        except Exception as e:
+            logger.warning(f"Failed to get installed snap packages: {e}")
+        
         # Process each package
         total = len(packages)
         logger.info(f"Planning installation for {total} snap packages")
@@ -344,6 +428,25 @@ class SnapPackageManager(PackageManager):
             
             # Skip if name is missing
             if not name:
+                continue
+            
+            # First check if already installed
+            if name in installed_packages:
+                installed_version = installed_packages[name]
+                logger.info(f"Snap package {name} is already installed (version {installed_version})")
+                
+                if version and version != installed_version:
+                    # Version mismatch between backup and installed
+                    pkg_copy = pkg.copy()
+                    pkg_copy['installed_version'] = installed_version
+                    upgradable_packages.append(pkg_copy)
+                    commands.append(f"# SNAP: Package '{name}' already installed but version differs: wanted {version}, have {installed_version}")
+                else:
+                    # Same version or no specific version requested
+                    available_packages.append(pkg)
+                    commands.append(f"# SNAP: Package '{name}' already installed with correct version")
+                
+                # Skip to next package
                 continue
             
             # Check if package is available in the snap store
@@ -399,15 +502,23 @@ class SnapPackageManager(PackageManager):
             if (i+1) % 5 == 0 or (i+1) == total:
                 logger.info(f"Planning progress: {i+1}/{total} snap packages processed")
         
-        # Add a summary at the top of the commands
-        if available_packages:
-            summary = f"# SNAP: Found {len(available_packages)} available packages out of {total} requested"
-            commands.insert(1, summary)
+        # Add accurate summaries at the top of the commands
+        avail_count = len(available_packages)
+        unavail_count = len(unavailable_packages)
+        upgrade_count = len(upgradable_packages)
         
-        if unavailable_packages:
-            unavailable_summary = f"# SNAP: Warning - {len(unavailable_packages)} packages are unavailable"
-            if unavailable_summary not in commands:
-                commands.insert(2 if available_packages else 1, unavailable_summary)
+        # Insert summaries at the beginning
+        if avail_count > 0:
+            commands.insert(1, f"# SNAP: {avail_count} packages available out of {total} requested")
+        
+        if unavail_count > 0:
+            commands.insert(2 if avail_count > 0 else 1, f"# SNAP: Warning - {unavail_count} packages are unavailable")
+            
+        if upgrade_count > 0:
+            commands.insert(3 if avail_count > 0 or unavail_count > 0 else 1, 
+                          f"# SNAP: Note - {upgrade_count} packages have version differences")
+        
+        logger.info(f"Plan for snap: {avail_count} available, {unavail_count} unavailable, {upgrade_count} with version differences")
         
         return {
             "available": available_packages,

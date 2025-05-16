@@ -10,6 +10,7 @@ import json
 import os
 import logging
 from datetime import datetime
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,22 @@ class PackageManager(ABC):
     def _check_available(self) -> bool:
         """Check if this package manager is available on the system"""
         try:
-            result = self._run_command(['--version'], check=False)
+            # Handle snap specially since it doesn't support --version
+            if self.name == 'snap':
+                if not shutil.which('snap'):
+                    logger.warning("Snap command not found in PATH")
+                    return False
+                cmd = ['snap', 'version']
+            else:
+                cmd = [self.name, '--version']
+            
+            result = subprocess.run(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
             return result.returncode == 0
         except FileNotFoundError:
             return False
