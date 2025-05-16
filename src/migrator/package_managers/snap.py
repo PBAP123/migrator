@@ -289,14 +289,14 @@ class SnapPackageManager(PackageManager):
         # All snap packages are considered user-installed
         return self.get_installed_version(package_name) is not None
         
-    def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
+    def plan_installation(self, packages: List[Dict[str, Any]]) -> Dict[str, List]:
         """Plan snap package installation without executing it
         
         Args:
             packages: List of package dictionaries from backup
             
         Returns:
-            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+            Dict with available, unavailable, upgradable packages and installation commands
         """
         available_packages = []
         unavailable_packages = []
@@ -309,8 +309,31 @@ class SnapPackageManager(PackageManager):
                 pkg_copy = pkg.copy()
                 pkg_copy['reason'] = 'Snap package manager not available on this system'
                 unavailable_packages.append(pkg_copy)
-            return available_packages, unavailable_packages, upgradable_packages, commands
             
+            # Add a descriptive comment
+            commands.append("# SNAP: Package manager not available on this system")
+            
+            return {
+                "available": available_packages,
+                "unavailable": unavailable_packages,
+                "upgradable": upgradable_packages,
+                "installation_commands": commands
+            }
+            
+        # Add header for snap packages
+        commands.append(f"# SNAP: Found {len(packages)} packages to install")
+        
+        # Check if snapd service is running
+        try:
+            status_cmd = ['systemctl', 'is-active', 'snapd.service']
+            status_result = subprocess.run(status_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            if status_result.returncode != 0:
+                commands.append("# SNAP: Warning - snapd service is not running, you may need to start it:")
+                commands.append("# SNAP: sudo systemctl start snapd.service")
+        except Exception:
+            # If we can't check, just ignore
+            pass
+        
         # Process each package
         total = len(packages)
         logger.info(f"Planning installation for {total} snap packages")
@@ -328,6 +351,7 @@ class SnapPackageManager(PackageManager):
                 pkg_copy = pkg.copy()
                 pkg_copy['reason'] = 'Package not available in Snap store'
                 unavailable_packages.append(pkg_copy)
+                commands.append(f"# SNAP: Warning - Package '{name}' not found in Snap store")
                 continue
                 
             # For Snap, we have two version-like concepts:
@@ -343,11 +367,11 @@ class SnapPackageManager(PackageManager):
                 # Exact version/channel/revision is available
                 available_packages.append(pkg)
                 if is_revision:
-                    commands.append(f"snap install {name} --revision {version}")
+                    commands.append(f"snap install {name} --revision {version}  # SNAP: Exact revision requested")
                 elif is_channel:
-                    commands.append(f"snap install {name} --channel {version}")
+                    commands.append(f"snap install {name} --channel {version}  # SNAP: Specific channel requested")
                 else:
-                    commands.append(f"snap install {name}")
+                    commands.append(f"snap install {name}  # SNAP: Will install version {version}")
             else:
                 # No specific version requested or requested version not available
                 # For Snap, we typically just install the latest version from the stable channel
@@ -359,19 +383,35 @@ class SnapPackageManager(PackageManager):
                     if version:
                         # Requested specific version but using a different one
                         upgradable_packages.append(pkg_copy)
-                        commands.append(f"snap install {name}  # Requested: {version}, Available: latest ({latest})")
+                        commands.append(f"snap install {name}  # SNAP: Requested: {version}, Available: latest ({latest})")
                     else:
                         # No specific version requested
                         available_packages.append(pkg_copy)
-                        commands.append(f"snap install {name}  # Will install version {latest}")
+                        commands.append(f"snap install {name}  # SNAP: Will install version {latest}")
                 else:
                     # Package exists but no version info available - rare for Snap
                     pkg_copy = pkg.copy()
                     pkg_copy['reason'] = 'Package exists but version information unavailable'
                     unavailable_packages.append(pkg_copy)
+                    commands.append(f"# SNAP: Warning - Package '{name}' exists but version information is unavailable")
             
             # Report progress periodically
             if (i+1) % 5 == 0 or (i+1) == total:
                 logger.info(f"Planning progress: {i+1}/{total} snap packages processed")
-                
-        return available_packages, unavailable_packages, upgradable_packages, commands 
+        
+        # Add a summary at the top of the commands
+        if available_packages:
+            summary = f"# SNAP: Found {len(available_packages)} available packages out of {total} requested"
+            commands.insert(1, summary)
+        
+        if unavailable_packages:
+            unavailable_summary = f"# SNAP: Warning - {len(unavailable_packages)} packages are unavailable"
+            if unavailable_summary not in commands:
+                commands.insert(2 if available_packages else 1, unavailable_summary)
+        
+        return {
+            "available": available_packages,
+            "unavailable": unavailable_packages,
+            "upgradable": upgradable_packages,
+            "installation_commands": commands
+        } 

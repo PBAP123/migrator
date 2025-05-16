@@ -153,15 +153,4 @@ class PackageManager(ABC):
         Returns:
             Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
         """
-        pass
-
-
-class PackageManagerFactory:
-    """Factory for creating appropriate package managers"""
-    
-    @staticmethod
-    def create_for_system() -> List[PackageManager]:
-        """Create all available package managers for the current system"""
-        # This will be implemented by importing all package managers
-        # and returning instances of those that are available
-        return [] 
+        pass 

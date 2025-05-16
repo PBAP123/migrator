@@ -1204,29 +1204,123 @@ class Migrator:
             # Create a dictionary mapping package manager names to instances
             pkg_manager_map = {pm.name: pm for pm in self.package_managers}
             
-            # Check availability for each package manager
+            # Process each package source in a consistent order to make output more predictable
+            source_order = ['apt', 'snap', 'flatpak', 'dnf', 'pacman', 'yum']
+            processed_sources = set()
+            
+            # First process sources in the preferred order
+            for source in source_order:
+                if source in grouped_packages and source in pkg_manager_map:
+                    pkgs = grouped_packages[source]
+                    pkg_manager = pkg_manager_map[source]
+                    
+                    # Add a comment indicating the source type
+                    installation_commands.append(f"# {source.upper()} Packages ({len(pkgs)} packages from backup)")
+                    
+                    # Get list of available packages and potential installation commands
+                    try:
+                        # Handle different package manager return types consistently
+                        result = pkg_manager.plan_installation(pkgs)
+                        
+                        # Snap manager returns tuple; others return dictionary
+                        if isinstance(result, tuple) and len(result) == 4:
+                            available, unavailable, upgrade_candidates, commands = result
+                        elif isinstance(result, dict):
+                            available = result.get("available", [])
+                            unavailable = result.get("unavailable", [])
+                            upgrade_candidates = result.get("upgradable", [])
+                            commands = result.get("installation_commands", [])
+                        else:
+                            logger.error(f"Unexpected result type from {source} package manager: {type(result)}")
+                            continue
+                        
+                        # Ensure all packages have source information
+                        for pkg_list in [available, unavailable, upgrade_candidates]:
+                            for i, pkg in enumerate(pkg_list):
+                                if isinstance(pkg, str):
+                                    # Convert string package names to dictionaries
+                                    pkg_list[i] = {"name": pkg, "source": source}
+                                elif isinstance(pkg, dict) and "source" not in pkg:
+                                    # Add source to dictionaries that don't have it
+                                    pkg["source"] = source
+                        
+                        # Add to our overall lists
+                        available_packages.extend(available)
+                        unavailable_packages.extend(unavailable)
+                        upgradable_packages.extend(upgrade_candidates)
+                        installation_commands.extend(commands)
+                        
+                        logger.info(f"Plan for {source}: {len(available)} available, {len(unavailable)} unavailable")
+                    except Exception as e:
+                        logger.error(f"Error planning for {source}: {e}")
+                    
+                    processed_sources.add(source)
+            
+            # Then process any remaining sources
             for source, pkgs in grouped_packages.items():
+                if source in processed_sources:
+                    continue  # Already processed
+                    
                 # Get the appropriate package manager instance
                 if source in pkg_manager_map:
                     pkg_manager = pkg_manager_map[source]
                     logger.info(f"Checking availability of {len(pkgs)} {source} packages")
                     
+                    # Add a comment indicating the source type
+                    installation_commands.append(f"# {source.upper()} Packages ({len(pkgs)} packages from backup)")
+                    
                     # Get list of available packages and potential installation commands
-                    available, unavailable, upgrade_candidates, commands = pkg_manager.plan_installation(pkgs)
-                    
-                    # Add to our overall lists
-                    available_packages.extend(available)
-                    unavailable_packages.extend(unavailable)
-                    upgradable_packages.extend(upgrade_candidates)
-                    installation_commands.extend(commands)
-                    
-                    logger.info(f"Plan for {source}: {len(available)} available, {len(unavailable)} unavailable")
+                    try:
+                        # Handle different package manager return types consistently
+                        result = pkg_manager.plan_installation(pkgs)
+                        
+                        # Snap manager returns tuple; others return dictionary
+                        if isinstance(result, tuple) and len(result) == 4:
+                            available, unavailable, upgrade_candidates, commands = result
+                        elif isinstance(result, dict):
+                            available = result.get("available", [])
+                            unavailable = result.get("unavailable", [])
+                            upgrade_candidates = result.get("upgradable", [])
+                            commands = result.get("installation_commands", [])
+                        else:
+                            logger.error(f"Unexpected result type from {source} package manager: {type(result)}")
+                            continue
+                        
+                        # Ensure all packages have source information
+                        for pkg_list in [available, unavailable, upgrade_candidates]:
+                            for i, pkg in enumerate(pkg_list):
+                                if isinstance(pkg, str):
+                                    # Convert string package names to dictionaries
+                                    pkg_list[i] = {"name": pkg, "source": source}
+                                elif isinstance(pkg, dict) and "source" not in pkg:
+                                    # Add source to dictionaries that don't have it
+                                    pkg["source"] = source
+                        
+                        # Add to our overall lists
+                        available_packages.extend(available)
+                        unavailable_packages.extend(unavailable)
+                        upgradable_packages.extend(upgrade_candidates)
+                        installation_commands.extend(commands)
+                        
+                        logger.info(f"Plan for {source}: {len(available)} available, {len(unavailable)} unavailable")
+                    except Exception as e:
+                        logger.error(f"Error planning for {source}: {e}")
                 else:
                     # If package manager not available, all packages are unavailable
                     logger.warning(f"Package manager {source} not available on this system")
+                    installation_commands.append(f"# {source.upper()} Packages - Package manager not available on this system")
                     for pkg in pkgs:
-                        pkg["reason"] = f"Package manager {source} not available on this system"
-                        unavailable_packages.append(pkg)
+                        # Ensure pkg is a dictionary with source and reason fields
+                        if isinstance(pkg, str):
+                            unavailable_packages.append({
+                                "name": pkg,
+                                "source": source,
+                                "reason": f"Package manager {source} not available on this system"
+                            })
+                        else:
+                            pkg_dict = pkg.copy() if isinstance(pkg, dict) else {"name": str(pkg), "source": source}
+                            pkg_dict["reason"] = f"Package manager {source} not available on this system"
+                            unavailable_packages.append(pkg_dict)
             
             # Create and return the plan
             plan = {

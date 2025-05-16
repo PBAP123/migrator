@@ -972,12 +972,101 @@ def handle_plan(app: Migrator, args: argparse.Namespace) -> int:
         "configs": cfg_plan
     }
     
+    # Group packages by source for better display
+    available_by_source = {}
+    unavailable_by_source = {}
+    
+    # Process available packages
+    for pkg in pkg_plan['available']:
+        # Handle cases where the package could be a string or a dictionary
+        if isinstance(pkg, dict):
+            source = pkg.get('source', 'unknown')
+        elif isinstance(pkg, str):
+            # If it's a string, assume it's a package name and use unknown source
+            logger.warning(f"Received package as string instead of dict: {pkg}")
+            source = 'unknown'
+        else:
+            # If it's some other type, log it and use unknown
+            logger.warning(f"Unexpected package type: {type(pkg)}, value: {pkg}")
+            source = 'unknown'
+            
+        if source not in available_by_source:
+            available_by_source[source] = []
+        available_by_source[source].append(pkg)
+    
+    # Process unavailable packages
+    for pkg in pkg_plan['unavailable']:
+        # Handle cases where the package could be a string or a dictionary
+        if isinstance(pkg, dict):
+            source = pkg.get('source', 'unknown')
+        elif isinstance(pkg, str):
+            # If it's a string, assume it's a package name and use unknown source
+            logger.warning(f"Received package as string instead of dict: {pkg}")
+            source = 'unknown'
+        else:
+            # If it's some other type, log it and use unknown
+            logger.warning(f"Unexpected package type: {type(pkg)}, value: {pkg}")
+            source = 'unknown'
+            
+        if source not in unavailable_by_source:
+            unavailable_by_source[source] = []
+        unavailable_by_source[source].append(pkg)
+    
     # Print summary
-    print("Package Installation Plan:")
-    print(f"  Available packages: {len(pkg_plan['available'])}")
-    print(f"  Upgradable packages: {len(pkg_plan['upgradable'])}")
-    print(f"  Unavailable packages: {len(pkg_plan['unavailable'])}")
+    print("\nPackage Installation Plan:")
+    print(f"  Total Available packages: {len(pkg_plan['available'])}")
+    
+    # Print available packages by source
+    if available_by_source:
+        print("  Available packages by source:")
+        for source, pkgs in sorted(available_by_source.items()):
+            print(f"    • {source}: {len(pkgs)} packages")
+    
+    # Print unavailable packages by source
+    print(f"\n  Total Unavailable packages: {len(pkg_plan['unavailable'])}")
+    if unavailable_by_source:
+        print("  Unavailable packages by source:")
+        for source, pkgs in sorted(unavailable_by_source.items()):
+            print(f"    • {source}: {len(pkgs)} packages")
+    
+    print(f"\n  Upgradable packages: {len(pkg_plan['upgradable'])}")
     print(f"  Installation commands: {len(pkg_plan['installation_commands'])}")
+    
+    # Extract commands grouped by package source
+    command_groups = {}
+    current_group = "unknown"
+    
+    for cmd in pkg_plan['installation_commands']:
+        # Skip comments
+        if isinstance(cmd, str) and cmd.startswith('#'):
+            # Check if this is a source marker
+            if "Found " in cmd and " Flatpak remotes" in cmd:
+                current_group = "flatpak"
+            elif any(marker in cmd for marker in ["apt", "snap", "flatpak", "dnf", "yum", "pacman"]):
+                # Extract the package manager from the comment
+                for pm in ["apt", "snap", "flatpak", "dnf", "yum", "pacman"]:
+                    if pm in cmd.lower():
+                        current_group = pm
+                        break
+            
+            # Start a new group if this is a header comment
+            if current_group not in command_groups:
+                command_groups[current_group] = []
+            command_groups[current_group].append(cmd)
+        else:
+            # Add to current group
+            if current_group not in command_groups:
+                command_groups[current_group] = []
+            command_groups[current_group].append(cmd)
+    
+    # Print command count by group
+    if command_groups:
+        print("\n  Installation commands by source:")
+        for source, cmds in sorted(command_groups.items()):
+            if source != "unknown":
+                # Count actual commands (not comments)
+                actual_commands = [c for c in cmds if not isinstance(c, str) or not c.startswith('#')]
+                print(f"    • {source}: {len(actual_commands)} commands")
     
     print("\nConfiguration Restoration Plan:")
     print(f"  Restorable configs: {len(cfg_plan['restorable'])}")
@@ -989,7 +1078,7 @@ def handle_plan(app: Migrator, args: argparse.Namespace) -> int:
         try:
             with open(args.output, 'w') as f:
                 json.dump(plan, f, indent=2)
-            print(f"Installation plan saved to {args.output}")
+            print(f"\nInstallation plan saved to {args.output}")
         except IOError as e:
             print(f"Error saving installation plan: {e}")
             return 1
