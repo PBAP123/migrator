@@ -866,7 +866,27 @@ Different package managers handle versions in different ways:
 - **dnf/yum**: Version specification using package-version syntax
 - **pacman**: Limited to latest available version in repositories
 - **snap**: Control via revision numbers or channels
-- **flatpak**: Always installs latest version available
+- **flatpak**: Always installs latest version available in remotes, with optimized detection for efficient planning
+
+## Performance Optimizations
+
+Migrator has been optimized in several key areas to ensure efficient operation, especially when handling large system migrations:
+
+### Flatpak Package Processing
+- Cached remote repository detection avoids redundant system calls
+- Prioritizes Flathub as the primary package source when available
+- Implements smart early-exit strategies to minimize processing time
+- Application ID lookup caching for faster display name resolution
+- Direct remote checking that significantly reduces planning time
+- Efficient handling of large Flatpak application lists
+
+### General Optimizations
+- Intelligent caching of common system information
+- Parallelized operations where appropriate
+- Early termination of searches when results are found
+- Memory-efficient processing of large configuration files
+
+These optimizations ensure Migrator remains responsive even with large system profiles containing hundreds of packages and configuration files.
 
 ## Frequently Asked Questions
 

@@ -54,6 +54,8 @@ Handles Flatpak package management:
 - Remote repository management
 - Application and runtime tracking
 - User vs. system installation handling
+- Optimized package availability checking with cached remotes
+- Performance-focused implementation for fast planning
 
 ### `appimage.py`
 Handles AppImage applications:
@@ -67,6 +69,7 @@ Handles AppImage applications:
 - Strategy pattern for different package management approaches
 - Adapter pattern for unified interface to different package managers
 - Command pattern for executing system commands
+- Caching pattern for performance optimization in Flatpak handling
 
 ## Relationship to Other Parts
 - Called by the main backup and restore routines in `main.py`

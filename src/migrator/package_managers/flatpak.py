@@ -23,6 +23,9 @@ class FlatpakPackageManager(PackageManager):
         # Check if flatpak is available
         self.available = shutil.which('flatpak') is not None
         
+        # Initialize cached remotes list
+        self._cached_remotes = None
+        
         # Prefetch remotes to know if we have a properly configured Flatpak
         if self.available:
             try:
@@ -228,7 +231,7 @@ class FlatpakPackageManager(PackageManager):
             # Log what we're searching for
             logger.info(f"Checking flatpak availability for: {package_name}")
             
-            # First, get list of configured remotes
+            # Get list of configured remotes (using cached version)
             logger.info("Getting list of configured Flatpak remotes")
             remotes = self._get_configured_remotes()
             
@@ -239,12 +242,12 @@ class FlatpakPackageManager(PackageManager):
             is_app_id = '.' in package_name
             logger.info(f"Search term appears to be an {'app ID' if is_app_id else 'display name'}")
             
-            # First try a direct lookup using the info command, which can sometimes work
-            # even when search doesn't find the package
-            for remote in remotes:
+            # For efficiency, try the first remote (likely flathub) first
+            if remotes:
+                primary_remote = remotes[0]  # First remote is typically flathub after our optimization
                 try:
-                    logger.info(f"Trying direct remote-info for {package_name} in remote {remote}")
-                    info_cmd = ['flatpak', 'remote-info', remote, package_name]
+                    logger.info(f"Trying direct remote-info for {package_name} in primary remote {primary_remote}")
+                    info_cmd = ['flatpak', 'remote-info', primary_remote, package_name]
                     info_result = subprocess.run(
                         info_cmd, 
                         stdout=subprocess.PIPE, 
@@ -254,82 +257,67 @@ class FlatpakPackageManager(PackageManager):
                     )
                     
                     if info_result.returncode == 0:
-                        logger.info(f"Found {package_name} directly in remote {remote}")
+                        logger.info(f"Found {package_name} directly in primary remote {primary_remote}")
                         return True
                 except Exception as e:
-                    logger.warning(f"Error checking remote-info for {package_name} in {remote}: {e}")
+                    logger.warning(f"Error checking remote-info for {package_name} in {primary_remote}: {e}")
             
-            # If we have an app ID, try searching with different formats
-            search_formats = []
+            # If app ID and not found in primary remote, check other remotes directly
             if is_app_id:
-                # For app IDs, try the ID directly
-                search_formats.append(('app_id', package_name))
+                # For app IDs, try other remotes directly as it's faster than search
+                for remote in remotes[1:]:  # Skip the primary remote we already checked
+                    try:
+                        logger.info(f"Trying direct remote-info for {package_name} in remote {remote}")
+                        info_cmd = ['flatpak', 'remote-info', remote, package_name]
+                        info_result = subprocess.run(
+                            info_cmd, 
+                            stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE, 
+                            text=True, 
+                            check=False
+                        )
+                        
+                        if info_result.returncode == 0:
+                            logger.info(f"Found {package_name} directly in remote {remote}")
+                            return True
+                    except Exception as e:
+                        logger.warning(f"Error checking remote-info for {package_name} in {remote}: {e}")
                 
-                # Also try with just the app name part
-                parts = package_name.split('.')
-                if len(parts) > 1:
-                    app_name = parts[-1].lower()
-                    search_formats.append(('app_name', app_name))
-            else:
-                # For display names, use as is
-                search_formats.append(('display_name', package_name))
-                # Also try lowercase
-                search_formats.append(('display_name_lower', package_name.lower()))
-            
-            # Try each search format
-            for search_type, search_term in search_formats:
-                logger.info(f"Searching for {package_name} using {search_type}: {search_term}")
-                
-                # Try a global search first
+                # For app IDs, try a global search as last resort
                 try:
-                    cmd = ['flatpak', 'search', '--columns=application,name', search_term]
+                    logger.info(f"Trying global search for app ID: {package_name}")
+                    cmd = ['flatpak', 'search', '--columns=application', package_name]
                     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
                     
                     if result.returncode == 0:
                         lines = result.stdout.strip().splitlines()
-                        logger.debug(f"Global search results for {search_term}: {len(lines)-1 if len(lines) > 0 else 0} results")
-                        
-                        if len(lines) > 1:  # There's at least one result beyond the header
-                            for line in lines[1:]:  # Skip header
-                                parts = line.split('\t') if '\t' in line else line.split()
-                                if len(parts) >= 1:
-                                    found_app_id = parts[0].strip()
-                                    # For app_id searches, check for exact match
-                                    if is_app_id and found_app_id == package_name:
-                                        logger.info(f"Found exact match for app ID: {package_name}")
-                                        return True
-                                    # For display name searches or partial matches
-                                    elif not is_app_id or search_type == 'app_name':
-                                        logger.info(f"Found potential match for {package_name}: {found_app_id}")
-                                        return True
+                        for line in lines[1:]:  # Skip header
+                            if package_name in line:
+                                logger.info(f"Found {package_name} in global search results")
+                                return True
                 except Exception as e:
-                    logger.warning(f"Error during global search for {search_term}: {e}")
+                    logger.warning(f"Error during global search for {package_name}: {e}")
                 
-                # Try each remote explicitly
-                for remote in remotes:
-                    try:
-                        logger.info(f"Searching in remote {remote} for {search_term}")
-                        cmd = ['flatpak', 'search', '--origin', remote, search_term]
-                        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                        
-                        if result.returncode == 0:
-                            lines = result.stdout.strip().splitlines()
-                            logger.debug(f"Search in {remote} for {search_term} found: {len(lines)-1 if len(lines) > 0 else 0} results")
-                            
-                            if len(lines) > 1:  # At least one result
-                                if is_app_id:
-                                    # For app ID searches, we need exact match
-                                    for line in lines[1:]:  # Skip header
-                                        parts = line.split('\t') if '\t' in line else line.split()
-                                        if len(parts) >= 1 and parts[0].strip() == package_name:
-                                            logger.info(f"Found exact app ID match in {remote}: {package_name}")
-                                            return True
-                                else:
-                                    # For display name, any result is potentially relevant
-                                    logger.info(f"Found potential matches in {remote} for display name: {package_name}")
-                                    return True
-                    except Exception as e:
-                        logger.warning(f"Error searching in remote {remote} for {search_term}: {e}")
+                # If we got here and it's an app ID, it's likely not available
+                logger.info(f"App ID {package_name} not found after direct checks")
+                return False
+            
+            # For display names, we'll need to do more extensive searching
+            # Try a direct global search first for efficiency
+            try:
+                logger.info(f"Searching globally for display name: {package_name}")
+                cmd = ['flatpak', 'search', '--columns=application,name', package_name]
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                
+                if result.returncode == 0:
+                    lines = result.stdout.strip().splitlines()
+                    logger.debug(f"Global search results for {package_name}: {len(lines)-1 if len(lines) > 0 else 0} results")
+                    
+                    if len(lines) > 1:  # There's at least one result beyond the header
+                        logger.info(f"Found potential matches for display name: {package_name}")
+                        return True
+            except Exception as e:
+                logger.warning(f"Error during global search for {package_name}: {e}")
             
             # As a last resort for common packages, try to check if it's installed
             # This helps with packages that might be from a remote we can't detect
@@ -342,8 +330,8 @@ class FlatpakPackageManager(PackageManager):
             except Exception as e:
                 logger.debug(f"Error checking if {package_name} is installed: {e}")
             
-            # If we've searched all remotes and formats and haven't found it, log and return False
-            logger.info(f"Package {package_name} not found in any flatpak remote after exhaustive search")
+            # If we've reached here, the package is likely not available
+            logger.info(f"Package {package_name} not found in any flatpak remote after searches")
             return False
             
         except Exception as e:
@@ -768,7 +756,7 @@ class FlatpakPackageManager(PackageManager):
         total = len(packages)
         logger.info(f"Planning installation for {total} Flatpak packages")
         
-        # First, get list of configured remotes
+        # Get list of configured remotes once at the beginning
         configured_remotes = self._get_configured_remotes()
         
         # Add a note about the available remotes to the commands
@@ -777,6 +765,16 @@ class FlatpakPackageManager(PackageManager):
         else:
             commands.append("# FLATPAK: Warning - No remotes configured. You need to add remotes before installing packages.")
             commands.append("# FLATPAK: Run: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo")
+        
+        # Optimize: Primarily use Flathub for checking app availability
+        primary_remote = 'flathub' if 'flathub' in configured_remotes else (configured_remotes[0] if configured_remotes else None)
+        
+        if primary_remote:
+            logger.info(f"Using {primary_remote} as primary remote for package availability checks")
+            commands.append(f"# FLATPAK: Using {primary_remote} as primary source for packages")
+        
+        # Create a cache for app ID lookups to avoid redundant searches
+        app_id_cache = {}
         
         # Process packages
         for i, pkg in enumerate(packages):
@@ -796,32 +794,88 @@ class FlatpakPackageManager(PackageManager):
             is_app_id = '.' in name
             
             if is_app_id:
-                # This looks like an app ID, check if available
-                if self.is_package_available(name):
-                    logger.info(f"Found app ID {name} in remotes")
-                    available.append(pkg)
+                # Optimize: Check the primary remote first if it exists
+                if primary_remote:
+                    found = False
+                    try:
+                        logger.info(f"Checking if {name} is available in primary remote: {primary_remote}")
+                        info_cmd = ['flatpak', 'remote-info', primary_remote, name]
+                        info_result = subprocess.run(
+                            info_cmd, 
+                            stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE, 
+                            text=True, 
+                            check=False
+                        )
+                        
+                        if info_result.returncode == 0:
+                            logger.info(f"Found {name} directly in primary remote {primary_remote}")
+                            found = True
+                            available.append(pkg)
+                            cmd = f"flatpak install -y {primary_remote}/{name}  # FLATPAK: From {primary_remote}, will install latest version"
+                            if cmd not in commands:
+                                commands.append(cmd)
+                    except Exception as e:
+                        logger.warning(f"Error checking {name} in primary remote {primary_remote}: {e}")
                     
-                    # Get remote info if possible
-                    remote_info = "unknown remote"
-                    for remote in configured_remotes:
-                        cmd = ['flatpak', 'remote-info', remote, name]
-                        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                        if result.returncode == 0:
-                            remote_info = remote
-                            break
-                    
-                    # Add to install command
-                    cmd = f"flatpak install -y {name}  # FLATPAK: From {remote_info}, will install latest version"
-                    if cmd not in commands:
-                        commands.append(cmd)
+                    # If not found in primary remote, check others
+                    if not found:
+                        # Fall back to the full availability check
+                        if self.is_package_available(name):
+                            logger.info(f"Found app ID {name} in remotes after extended search")
+                            available.append(pkg)
+                            
+                            # Get remote info if possible
+                            remote_info = "unknown remote"
+                            for remote in configured_remotes:
+                                cmd = ['flatpak', 'remote-info', remote, name]
+                                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                                if result.returncode == 0:
+                                    remote_info = remote
+                                    break
+                            
+                            # Add to install command
+                            cmd = f"flatpak install -y {name}  # FLATPAK: From {remote_info}, will install latest version"
+                            if cmd not in commands:
+                                commands.append(cmd)
+                        else:
+                            logger.warning(f"App ID {name} not found in any remote")
+                            unavailable.append(pkg)
+                            commands.append(f"# FLATPAK: Warning - Could not find {name} in any remote")
                 else:
-                    logger.warning(f"App ID {name} not found in any remote")
-                    unavailable.append(pkg)
-                    commands.append(f"# FLATPAK: Warning - Could not find {name} in any remote")
+                    # No primary remote, use the full availability check
+                    if self.is_package_available(name):
+                        logger.info(f"Found app ID {name} in remotes")
+                        available.append(pkg)
+                        
+                        # Get remote info if possible
+                        remote_info = "unknown remote"
+                        for remote in configured_remotes:
+                            cmd = ['flatpak', 'remote-info', remote, name]
+                            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                            if result.returncode == 0:
+                                remote_info = remote
+                                break
+                        
+                        # Add to install command
+                        cmd = f"flatpak install -y {name}  # FLATPAK: From {remote_info}, will install latest version"
+                        if cmd not in commands:
+                            commands.append(cmd)
+                    else:
+                        logger.warning(f"App ID {name} not found in any remote")
+                        unavailable.append(pkg)
+                        commands.append(f"# FLATPAK: Warning - Could not find {name} in any remote")
             else:
                 # This is a display name - try to find the corresponding app ID
-                logger.info(f"Searching for app ID for display name: {name}")
-                app_id = self.get_app_id_for_display_name(name)
+                # First check if we already have this in our cache
+                if name in app_id_cache:
+                    app_id = app_id_cache[name]
+                    logger.info(f"Using cached app ID {app_id} for display name {name}")
+                else:
+                    logger.info(f"Searching for app ID for display name: {name}")
+                    app_id = self.get_app_id_for_display_name(name)
+                    # Cache the result for future lookups
+                    app_id_cache[name] = app_id
                 
                 if app_id:
                     # We found a matching app ID
@@ -834,17 +888,28 @@ class FlatpakPackageManager(PackageManager):
                     new_pkg['original_name'] = name
                     available.append(new_pkg)
                     
-                    # Get remote info if possible
+                    # Optimize: Check primary remote first
                     remote_info = "unknown remote"
-                    for remote in configured_remotes:
-                        cmd = ['flatpak', 'remote-info', remote, app_id]
+                    if primary_remote:
+                        cmd = ['flatpak', 'remote-info', primary_remote, app_id]
                         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
                         if result.returncode == 0:
-                            remote_info = remote
-                            break
+                            remote_info = primary_remote
+                    
+                    # If not found in primary, check other remotes
+                    if remote_info == "unknown remote":
+                        for remote in configured_remotes:
+                            if remote == primary_remote:
+                                continue  # Skip primary as we already checked it
+                            cmd = ['flatpak', 'remote-info', remote, app_id]
+                            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                            if result.returncode == 0:
+                                remote_info = remote
+                                break
                     
                     # Add to install command
-                    cmd = f"flatpak install -y {app_id}  # FLATPAK: {name}, from {remote_info}, will install latest version"
+                    install_remote = f"{remote_info}/" if remote_info != "unknown remote" else ""
+                    cmd = f"flatpak install -y {install_remote}{app_id}  # FLATPAK: {name}, from {remote_info}, will install latest version"
                     if cmd not in commands:
                         commands.append(cmd)
                 else:
@@ -882,7 +947,31 @@ class FlatpakPackageManager(PackageManager):
         Returns:
             List of remote names
         """
+        # Use cached remotes if available
+        if self._cached_remotes is not None:
+            logger.debug(f"Using cached remotes: {', '.join(self._cached_remotes)}")
+            return self._cached_remotes
+            
         remotes = []
+        
+        # Fast path: Try direct access to flathub first
+        # This is the most common remote and often works even if it's not listed
+        try:
+            logger.info("Fast path: Checking if flathub is accessible directly")
+            test_cmd = ['flatpak', 'remote-info', 'flathub', 'org.gnome.Platform']
+            test_result = subprocess.run(test_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            
+            if test_result.returncode == 0:
+                logger.info("flathub is accessible - using as primary remote")
+                remotes.append('flathub')
+                
+                # If flathub is accessible, we can use it as a primary remote
+                # We'll still check for other remotes, but this gives us a fast path for lookups
+        except Exception as e:
+            logger.warning(f"Error checking direct flathub access: {e}")
+            
+        # If flathub is accessible and we want to be super fast, we could just return here
+        # However, to be thorough, we'll continue checking for other remotes
         
         # Try multiple methods to ensure we find all remotes
         methods = [
@@ -911,35 +1000,31 @@ class FlatpakPackageManager(PackageManager):
                         for remote in new_remotes:
                             if remote and remote not in remotes:
                                 remotes.append(remote)
+                                
+                        # If we found remotes, we can stop here to be more efficient
+                        if remotes:
+                            logger.info(f"Found {len(remotes)} remotes, stopping remote detection early")
+                            break
                 else:
                     logger.warning(f"Error listing Flatpak remotes via {method_name}: {result.stderr.strip()}")
             except Exception as e:
                 logger.error(f"Exception getting Flatpak remotes via {method_name}: {e}")
         
-        # Check if flathub is configured by trying to access it directly
-        if not remotes or 'flathub' not in [r.lower() for r in remotes]:
-            try:
-                # Check if we can access flathub directly
-                logger.info("Checking if flathub is accessible directly")
-                test_cmd = ['flatpak', 'remote-info', 'flathub', 'org.gnome.Platform']
-                test_result = subprocess.run(test_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                
-                if test_result.returncode == 0:
-                    logger.info("flathub appears to be accessible despite not being listed in remotes")
-                    if 'flathub' not in remotes:
-                        remotes.append('flathub')
-            except Exception as e:
-                logger.warning(f"Error checking direct flathub access: {e}")
-        
-        # Check common paths for flatpak remote configuration
+        # Skip filesystem checks if we already found remotes
         if not remotes:
+            # Check common paths for flatpak remote configuration
             logger.info("Checking filesystem for flatpak remote configuration files")
             config_paths = [
                 '/var/lib/flatpak/repo/config',  # System-wide flatpak config
                 os.path.expanduser('~/.local/share/flatpak/repo/config'),  # User flatpak config
-                '/etc/flatpak/remotes.d/',  # System remote configs 
-                os.path.expanduser('~/.local/share/flatpak/remotes/')  # User remote configs
             ]
+            
+            # Only check these directories if we still haven't found remotes
+            if not remotes:
+                config_paths.extend([
+                    '/etc/flatpak/remotes.d/',  # System remote configs 
+                    os.path.expanduser('~/.local/share/flatpak/remotes/')  # User remote configs
+                ])
             
             for path in config_paths:
                 try:
@@ -965,5 +1050,8 @@ class FlatpakPackageManager(PackageManager):
             logger.info(f"Final list of {len(remotes)} Flatpak remotes: {', '.join(remotes)}")
         else:
             logger.warning("No Flatpak remotes detected after trying multiple methods")
+        
+        # Cache the results
+        self._cached_remotes = remotes
         
         return remotes 
