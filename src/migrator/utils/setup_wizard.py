@@ -22,6 +22,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import logging
 import getpass
+import json
 from typing import Dict, Any, Optional, List, Tuple
 
 from .config import config
@@ -634,10 +635,49 @@ class SetupWizard:
 # Create instance for easy access
 wizard = SetupWizard()
 
-def run_setup_wizard() -> Dict[str, Any]:
-    """Run the interactive setup wizard
+def setup_package_mappings():
+    """Setup the package mappings file if it doesn't exist"""
+    mappings_dir = os.path.expanduser("~/.config/migrator")
+    mappings_file = os.path.join(mappings_dir, "package_mappings.json")
     
-    Returns:
-        Dictionary of configuration options set by the user
-    """
+    if not os.path.exists(mappings_dir):
+        os.makedirs(mappings_dir, exist_ok=True)
+        
+    if not os.path.exists(mappings_file):
+        # Create a default mappings file with explanation
+        default_mappings = {
+            "_comment": "Add your custom package mappings here. Format: package_name: {apt: apt_name, dnf: dnf_name, pacman: pacman_name}",
+            "example": {
+                "apt": "example-package",
+                "dnf": "example-package",
+                "pacman": "example-package"
+            }
+        }
+        
+        try:
+            with open(mappings_file, 'w') as f:
+                json.dump(default_mappings, f, indent=4)
+            logger.info(f"Created default package mappings file at {mappings_file}")
+            return True
+        except Exception as e:
+            logger.error(f"Error creating package mappings file: {e}")
+            return False
+    
+    return True
+
+def run_setup_wizard() -> Dict[str, Any]:
+    """Run the setup wizard to configure migrator for first use"""
+    print("\n=== Migrator Setup Wizard ===\n")
+    print("This wizard will help you set up Migrator for the first time.")
+    
+    # Create config directories
+    config_dir = os.path.expanduser("~/.config/migrator")
+    data_dir = os.path.expanduser("~/.local/share/migrator")
+    
+    os.makedirs(config_dir, exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
+    
+    # Setup package mappings file
+    setup_package_mappings()
+    
     return wizard.run_wizard() 

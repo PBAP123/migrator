@@ -10,6 +10,8 @@ The main package containing all implementation code. This contains:
 - Core functionality modules
 - Command-line interface implementation
 - Utility subpackages
+- Cross-distribution package equivalence detection
+- Package manager integration
 
 ### `src/migrator.egg-info/`
 Generated metadata directory created during installation that contains package information. This is not meant to be modified directly.

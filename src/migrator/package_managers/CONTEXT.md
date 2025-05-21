@@ -20,6 +20,13 @@ Implements a factory pattern for package manager creation:
 - Creates appropriate package manager instances
 - Handles fallbacks and compatibility
 
+### `package_mapper.py`
+Implements cross-distribution package equivalence detection:
+- Built-in mappings for common packages across apt, dnf, and pacman
+- Pattern matching for common package naming conventions
+- Custom user mappings through a JSON configuration file
+- Intelligent search for similar packages when exact matches aren't available
+
 ### `apt.py`
 Handles Debian/Ubuntu APT package management:
 - apt/apt-get/dpkg command interaction

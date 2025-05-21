@@ -26,12 +26,13 @@ import platform
 import datetime
 import logging
 import fnmatch
+import subprocess
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 from migrator.main import Migrator
 from migrator.utils.service import create_systemd_service, remove_systemd_service
-from migrator.utils.setup_wizard import run_setup_wizard
+from migrator.utils.setup_wizard import run_setup_wizard, setup_package_mappings
 from migrator.utils.config import config
 
 logger = logging.getLogger(__name__)
@@ -270,6 +271,9 @@ def setup_argparse() -> argparse.ArgumentParser:
     
     # Setup command
     setup_parser = subparsers.add_parser('setup', help='Run the interactive setup wizard')
+    
+    # Edit mappings command
+    mappings_parser = subparsers.add_parser('edit-mappings', help='Edit package mappings for cross-distribution equivalence')
     
     return parser
 
@@ -1718,6 +1722,25 @@ def _display_backups(app: Migrator, backup_files: List[str], show_detail: bool =
             host_info = f"[{host_name}] " if is_in_host_dir else ""
             print(f"{i}. {host_info}{filename} - {mod_time.strftime('%Y-%m-%d %H:%M:%S')} ({size_str})")
 
+def handle_edit_mappings(args: argparse.Namespace) -> int:
+    """Handle edit mappings command"""
+    mappings_file = os.path.expanduser("~/.config/migrator/package_mappings.json")
+    
+    # Ensure the file exists
+    if not os.path.exists(mappings_file):
+        print("Package mappings file doesn't exist. Creating it now...")
+        setup_package_mappings()
+    
+    # Open the file in the default editor
+    try:
+        editor = os.environ.get('EDITOR', 'nano')
+        subprocess.call([editor, mappings_file])
+        print(f"Package mappings file edited successfully at {mappings_file}")
+        return 0
+    except Exception as e:
+        print(f"Error opening editor: {e}")
+        return 1
+
 def main() -> int:
     """Main entry point for the application"""
     parser = setup_argparse()
@@ -1768,6 +1791,8 @@ def main() -> int:
         return handle_setup(app, args)
     elif args.command == 'list-backups':
         return handle_list_backups(app, args)
+    elif args.command == 'edit-mappings':
+        return handle_edit_mappings(args)
     else:
         # Show help if no command specified
         parser.print_help()

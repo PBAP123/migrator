@@ -12,6 +12,7 @@ from .flatpak import FlatpakPackageManager
 from .appimage import AppImageManager
 from .dnf import DnfPackageManager
 from .pacman import PacmanPackageManager
+from .package_mapper import PackageMapper
 
 __all__ = [
     'Package',
@@ -23,4 +24,5 @@ __all__ = [
     'AppImageManager',
     'DnfPackageManager',
     'PacmanPackageManager',
+    'PackageMapper',
 ]

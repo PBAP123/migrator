@@ -22,6 +22,7 @@ Core functionality implementation including:
 - Restoration functionality
 - System state tracking
 - Comparison logic between current system and backups
+- Cross-distribution package equivalence detection during restore
 
 ## Subdirectories
 
@@ -51,12 +52,14 @@ Contains modules for interacting with different package managers:
 - Flatpak support
 - AppImage tracking
 - Factory for detecting and creating appropriate package manager instances
+- Package mapper for cross-distribution package equivalence detection
 
 ## Architectural Patterns
 The codebase follows these design patterns:
 - Factory pattern for package manager creation
 - Strategy pattern for different configuration tracking approaches
 - Command pattern for CLI operations
+- Adapter pattern for cross-package-manager compatibility
 
 ## Relationship to Other Parts
 - The implementation here is accessed through the root-level wrapper scripts

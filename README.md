@@ -33,6 +33,11 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
   - Snap packages
   - Flatpak packages
   - AppImages
+- **Cross-Distribution Package Mapping**: Intelligently maps packages between different package managers:
+  - Finds equivalent packages when migrating between distributions (e.g., apt to dnf)
+  - Uses built-in mappings for common packages
+  - Applies pattern matching for package naming conventions
+  - Supports user-defined custom mappings
 - **Configuration Tracking**: Identifies and tracks both system and user configuration files.
 - **Desktop Environment Backup**: Preserves your personalized desktop experience (included by default):
   - Gnome settings and extensions
@@ -89,6 +94,8 @@ Don't waste hours reinstalling packages and reconfiguring settings. With Migrato
 - Detects manually installed packages vs dependencies
 - Restores manually installed packages on a new system
 - Supports APT, DNF, Pacman, Flatpak, Snap, and AppImage
+- Maps packages between different package managers during cross-distribution migration
+- Allows custom package equivalence mappings through user-editable configuration
 - Restores compatible packages when switching Linux distributions
 - Intelligent version handling with configurable policies
 
@@ -250,6 +257,8 @@ migrator plan PATH_TO_YOUR_BACKUP.json
 
 This command:
 - Maps packages from your source distribution to the target distribution
+- Intelligently finds equivalent packages across different package managers
+- Uses built-in mappings and pattern matching for package equivalence detection
 - Creates a detailed plan for installing compatible packages
 - Identifies packages that may need to be manually handled
 - Recommends equivalent packages when direct matches aren't available
@@ -332,6 +341,27 @@ migrator install-service --user
 migrator install-service --daily "03:00"
 ```
 
+### Customizing Package Mappings
+
+To edit the package equivalence mappings for cross-distribution migration:
+
+```bash
+# Open the package mappings file in your default editor
+migrator edit-mappings
+```
+
+This allows you to customize how packages are mapped between different distributions. For example, you can add entries like:
+
+```json
+"firefox-esr": {
+  "apt": "firefox-esr",
+  "dnf": "firefox",
+  "pacman": "firefox"
+}
+```
+
+The mappings file is located at `~/.config/migrator/package_mappings.json` and can also be edited directly.
+
 ## Updating Migrator
 
 ### Updating After Code Changes
@@ -386,6 +416,11 @@ If you encounter any of these issues:
   - Snap packages
   - Flatpak packages
   - AppImages
+- **Cross-Distribution Package Mapping**: Intelligently maps packages between different package managers:
+  - Finds equivalent packages when migrating between distributions (e.g., apt to dnf)
+  - Uses built-in mappings for common packages
+  - Applies pattern matching for package naming conventions
+  - Supports user-defined custom mappings
 - **Configuration Tracking**: Identifies and tracks both system and user configuration files.
 - **Desktop Environment Backup**: Preserves your personalized desktop experience:
   - Gnome settings and extensions
