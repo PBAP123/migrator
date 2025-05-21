@@ -253,6 +253,10 @@ class RepositoryManager:
         # Process each repo file
         for repo_file in repo_files:
             try:
+                # Skip if the path is a directory
+                if os.path.isdir(repo_file):
+                    continue
+                    
                 with open(repo_file, 'r') as f:
                     content = f.read()
                 
@@ -375,6 +379,10 @@ class RepositoryManager:
         # Process each repo file
         for repo_file in repo_files:
             try:
+                # Skip if the path is a directory
+                if os.path.isdir(repo_file):
+                    continue
+                    
                 with open(repo_file, 'r') as f:
                     content = f.read()
                 
@@ -500,11 +508,14 @@ class RepositoryManager:
             elif os.path.exists(expanded_path):
                 repo_files.append(expanded_path)
         
-        # Process pacman.conf for custom repositories
-        pacman_conf = "/etc/pacman.conf"
-        if pacman_conf in repo_files:
+        # Process each repo file
+        for repo_file in repo_files:
             try:
-                with open(pacman_conf, 'r') as f:
+                # Skip if the path is a directory
+                if os.path.isdir(repo_file):
+                    continue
+                    
+                with open(repo_file, 'r') as f:
                     content = f.read()
                 
                 # Parse repositories
@@ -558,7 +569,7 @@ class RepositoryManager:
                     
                     self.repositories.append(repo)
             except Exception as e:
-                logger.error(f"Error scanning Pacman config {pacman_conf}: {e}")
+                logger.error(f"Error scanning Pacman config {repo_file}: {e}")
     
     def _scan_flatpak_remotes(self) -> None:
         """Scan Flatpak remotes"""
