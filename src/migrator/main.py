@@ -1238,6 +1238,14 @@ class Migrator:
                 source_pkg_format = "dnf"
             elif source_distro_id in ["arch", "manjaro"] or any(id in source_distro_id for id in ["arch", "manjaro"]):
                 source_pkg_format = "pacman"
+            # If source_pkg_format is still unknown but we have apt packages in the backup, assume apt
+            elif 'apt' in grouped_packages:
+                source_pkg_format = "apt"
+            # Similarly for dnf and pacman
+            elif 'dnf' in grouped_packages:
+                source_pkg_format = "dnf"
+            elif 'pacman' in grouped_packages:
+                source_pkg_format = "pacman"
                 
             target_pkg_format = "unknown"
             for pm in self.package_managers:
@@ -1259,19 +1267,43 @@ class Migrator:
             processed_sources = set()
             
             # First, handle cross-package-manager packages
+            # We handle two cases:
+            # 1. When source_pkg_format is known and different from target_pkg_format
+            # 2. When a source package manager isn't available on the target system (e.g., apt packages but no apt on target)
+            cross_pm_needed = False
+            
+            # Case 1: Known different formats
             if source_pkg_format != target_pkg_format and source_pkg_format != "unknown" and target_pkg_format != "unknown":
-                logger.info(f"Attempting to find equivalent packages between {source_pkg_format} and {target_pkg_format}")
+                cross_pm_needed = True
+                
+            # Case 2: Source package manager not available on target
+            source_pms_to_map = []
+            for source_pm in ['apt', 'dnf', 'pacman']:
+                if source_pm in grouped_packages and source_pm not in pkg_manager_map:
+                    source_pms_to_map.append(source_pm)
+                    cross_pm_needed = True
+            
+            if cross_pm_needed:
+                logger.info(f"Attempting to find equivalent packages between different package managers")
                 
                 # Find packages that need cross-package-manager mapping
                 cross_pm_packages = []
                 
                 # Add packages from the source package format that need mapping
-                if source_pkg_format in grouped_packages:
+                if source_pkg_format != "unknown" and source_pkg_format in grouped_packages:
                     cross_pm_packages.extend(grouped_packages[source_pkg_format])
+                    processed_sources.add(source_pkg_format)
+                    
+                # Add packages from specific source package managers that aren't available
+                for source_pm in source_pms_to_map:
+                    if source_pm in grouped_packages:
+                        cross_pm_packages.extend(grouped_packages[source_pm])
+                        processed_sources.add(source_pm)
                     
                 # Also check packages from 'unknown' source if any
                 if 'unknown' in grouped_packages:
                     cross_pm_packages.extend(grouped_packages.get('unknown', []))
+                    processed_sources.add('unknown')
                 
                 if cross_pm_packages:
                     logger.info(f"Checking {len(cross_pm_packages)} packages for equivalence mapping")
@@ -1370,10 +1402,6 @@ class Migrator:
                                 # No equivalent package found
                                 pkg['reason'] = f'No equivalent package found for {target_pkg_format}'
                                 unavailable_packages.append(pkg)
-                                
-                        # Mark source format as processed so we don't process it again below
-                        if source_pkg_format in grouped_packages:
-                            processed_sources.add(source_pkg_format)
                     else:
                         logger.warning(f"Target package manager {target_pkg_format} not found")
             
@@ -1468,18 +1496,80 @@ class Migrator:
                     # If package manager not available, all packages are unavailable
                     logger.warning(f"Package manager {source} not available on this system")
                     installation_commands.append(f"# {source.upper()} Packages - Package manager not available on this system")
-                    for pkg in pkgs:
-                        # Ensure pkg is a dictionary with source and reason fields
-                        if isinstance(pkg, str):
-                            unavailable_packages.append({
-                                "name": pkg,
-                                "source": source,
-                                "reason": f"Package manager {source} not available on this system"
-                            })
-                        else:
-                            pkg_dict = pkg.copy() if isinstance(pkg, dict) else {"name": str(pkg), "source": source}
-                            pkg_dict["reason"] = f"Package manager {source} not available on this system"
-                            unavailable_packages.append(pkg_dict)
+                    
+                    # If we have a target package manager, try to map each package
+                    if target_pkg_format != "unknown" and target_pkg_format in pkg_manager_map:
+                        logger.info(f"Trying to map {len(pkgs)} {source} packages to {target_pkg_format}")
+                        target_pm = pkg_manager_map[target_pkg_format]
+                        
+                        # Add a section for mapped packages in the installation commands
+                        installation_commands.append(f"# Mapped {source.upper()} packages to {target_pkg_format.upper()}")
+                        
+                        mapped_count = 0
+                        for pkg in pkgs:
+                            pkg_name = pkg.get('name', '')
+                            if not pkg_name:
+                                continue
+                                
+                            # Try to find an equivalent package
+                            equivalent_name = self.package_mapper.get_equivalent_package(
+                                pkg_name, source, target_pkg_format)
+                                
+                            if equivalent_name and target_pm.is_package_available(equivalent_name):
+                                # Found an equivalent package that's available
+                                equiv_pkg = pkg.copy() if isinstance(pkg, dict) else {"name": pkg_name, "source": source}
+                                equiv_pkg['name'] = equivalent_name
+                                equiv_pkg['original_name'] = pkg_name
+                                equiv_pkg['original_source'] = source
+                                equiv_pkg['source'] = target_pkg_format
+                                
+                                # Get the latest version available
+                                latest_version = target_pm.get_latest_version(equivalent_name)
+                                if latest_version:
+                                    equiv_pkg['version'] = latest_version
+                                    
+                                # Add to available packages
+                                available_packages.append(equiv_pkg)
+                                
+                                # Add installation command
+                                cmd = ""
+                                if target_pkg_format == "apt":
+                                    cmd = f"apt install -y {equivalent_name}"
+                                elif target_pkg_format == "dnf":
+                                    cmd = f"dnf install -y {equivalent_name}"
+                                elif target_pkg_format == "pacman":
+                                    cmd = f"pacman -S --noconfirm {equivalent_name}"
+                                    
+                                installation_commands.append(
+                                    f"# Equivalent package for {pkg_name} ({source})\n{cmd}"
+                                )
+                                
+                                mapped_count += 1
+                                logger.info(f"Found equivalent package: {pkg_name} ({source}) -> {equivalent_name} ({target_pkg_format})")
+                            else:
+                                # No equivalent package found or not available
+                                pkg_dict = pkg.copy() if isinstance(pkg, dict) else {"name": pkg_name, "source": source}
+                                if equivalent_name:
+                                    pkg_dict["reason"] = f"Equivalent package {equivalent_name} not available in repositories"
+                                else:
+                                    pkg_dict["reason"] = f"No equivalent package found for {target_pkg_format}"
+                                unavailable_packages.append(pkg_dict)
+                                
+                        logger.info(f"Mapped {mapped_count} out of {len(pkgs)} {source} packages to {target_pkg_format}")
+                    else:
+                        # No mapping possible, mark all as unavailable
+                        for pkg in pkgs:
+                            # Ensure pkg is a dictionary with source and reason fields
+                            if isinstance(pkg, str):
+                                unavailable_packages.append({
+                                    "name": pkg,
+                                    "source": source,
+                                    "reason": f"Package manager {source} not available on this system"
+                                })
+                            else:
+                                pkg_dict = pkg.copy() if isinstance(pkg, dict) else {"name": str(pkg), "source": source}
+                                pkg_dict["reason"] = f"Package manager {source} not available on this system"
+                                unavailable_packages.append(pkg_dict)
             
             # Create and return the plan
             plan = {

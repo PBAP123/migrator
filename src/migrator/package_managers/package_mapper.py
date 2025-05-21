@@ -13,7 +13,24 @@ import subprocess
 logger = logging.getLogger(__name__)
 
 class PackageMapper:
-    """Maps packages between different package managers and distributions"""
+    """Maps packages between different package managers and distributions
+    
+    This class handles the cross-distribution package mapping functionality by:
+    
+    1. Using a built-in dictionary of known equivalent packages across package managers
+       (apt → dnf → pacman)
+    2. Applying common naming pattern transformations (e.g., python3-foo in apt → python-foo in pacman)
+    3. Using package name normalization to handle common differences in naming conventions
+    4. Performing package availability checks to find the best match
+    5. Supporting user customization through the ~/.config/migrator/package_mappings.json file
+    
+    During backup restoration planning, if packages from one system (e.g., Ubuntu with apt) 
+    are being restored to a different system (e.g., Fedora with dnf), this mapper will
+    attempt to find the equivalent packages in the target system's repositories.
+    
+    Users can customize the mapping by editing their mappings file with:
+    migrator edit-mappings
+    """
     
     def __init__(self):
         self.equiv_map = {}
