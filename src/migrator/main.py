@@ -461,7 +461,7 @@ class Migrator:
                            desktop_environments=None, exclude_desktop=None,
                            include_paths=None, exclude_paths=None,
                            include_fstab_portability=True, include_repos=True,
-                           test_mode=False) -> None:
+                           test_mode=False, apps_only=False) -> None:
         """Update the system state by scanning for packages and configuration files
         
         Args:
@@ -473,6 +473,7 @@ class Migrator:
             include_fstab_portability: Whether to process fstab for portable entries
             include_repos: Whether to include software repositories
             test_mode: Whether to run in test mode (reduced package scanning)
+            apps_only: Whether to only scan for installed packages (skips config files)
         """
         # Update fstab portability setting
         self.system_config_tracker.include_fstab_portability = include_fstab_portability
@@ -485,16 +486,22 @@ class Migrator:
         self.installed_packages = self.scan_packages(test_mode=test_mode)
         logger.info(f"Found {len(self.installed_packages)} installed packages")
         
-        # Scan for configuration files
-        logger.info("Scanning for configuration files...")
-        self.config_files = self.scan_config_files(
-            include_desktop=include_desktop,
-            desktop_environments=desktop_environments,
-            exclude_desktop=exclude_desktop,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths
-        )
-        logger.info(f"Found {len(self.config_files)} configuration files")
+        # Skip config scanning in apps-only mode
+        if not apps_only:
+            # Scan for configuration files
+            logger.info("Scanning for configuration files...")
+            self.config_files = self.scan_config_files(
+                include_desktop=include_desktop,
+                desktop_environments=desktop_environments,
+                exclude_desktop=exclude_desktop,
+                include_paths=include_paths,
+                exclude_paths=exclude_paths
+            )
+            logger.info(f"Found {len(self.config_files)} configuration files")
+        else:
+            logger.info("Apps-only mode: skipping configuration file scanning")
+            # Clear any existing config files list
+            self.config_files = []
         
         # Scan for software repositories if enabled
         if include_repos:

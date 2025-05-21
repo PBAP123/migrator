@@ -32,6 +32,7 @@ from pathlib import Path
 from migrator.main import Migrator
 from migrator.utils.service import create_systemd_service, remove_systemd_service
 from migrator.utils.setup_wizard import run_setup_wizard
+from migrator.utils.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,8 @@ def setup_argparse() -> argparse.ArgumentParser:
     # Backup command
     backup_parser = subparsers.add_parser('backup', help='Backup system state')
     backup_parser.add_argument('backup_dir', nargs='?', default=None, help='Directory to store backup (defaults to configured backup directory)')
+    backup_parser.add_argument('--apps-only', action='store_true',
+                             help='Backup only installed applications list, no config files')
     backup_parser.add_argument('--no-desktop', action='store_true', 
                              help='Skip desktop environment configs (included by default)')
     backup_parser.add_argument('--desktop-environments', 
@@ -367,14 +370,49 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     else:
         print(f"Backing up system state to {backup_dir}...")
     
-    # Process desktop environment options - default is now TRUE (include desktop)
+    # Process desktop environment options
     include_desktop = not args.no_desktop if hasattr(args, 'no_desktop') else True
     desktop_envs = None
     exclude_desktop = None
     
+    # Check if command line args should override saved config
+    has_command_line_override = hasattr(args, 'apps_only') and args.apps_only
+    
+    # Initialize apps_only variable 
+    apps_only = False
+    
+    # If command line flag is specified, it overrides saved config
+    if has_command_line_override:
+        apps_only = True
+        print("Apps-only mode selected from command line: backing up only installed applications list")
+        include_desktop = False
+        include_fstab_portability = False
+    else:
+        # Check saved configuration for backup mode
+        saved_backup_mode = config.get("backup_mode", "standard")
+        
+        if saved_backup_mode == "apps_only":
+            print("Apps-only mode (from saved configuration): backing up only installed applications list")
+            apps_only = True
+            include_desktop = False
+            include_fstab_portability = False
+        elif saved_backup_mode == "standard":
+            print("Standard backup mode (from saved configuration): apps + essential configs")
+            apps_only = False
+            include_desktop = False  # Standard mode doesn't include desktop configs
+            include_fstab_portability = config.get("include_fstab_portability", True)
+        elif saved_backup_mode == "complete":
+            print("Complete backup mode (from saved configuration): all apps and configurations")
+            apps_only = False
+            include_desktop = config.get("include_desktop_configs", True)
+            include_fstab_portability = config.get("include_fstab_portability", True)
+        else:
+            # Default if no recognized mode
+            apps_only = False
+    
     if hasattr(args, 'desktop_environments') and args.desktop_environments:
         desktop_envs = args.desktop_environments.split(',')
-        
+    
     if hasattr(args, 'exclude_desktop') and args.exclude_desktop:
         exclude_desktop = args.exclude_desktop.split(',')
     
@@ -413,6 +451,10 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
     
     # Handle fstab portability option
     include_fstab_portability = not args.no_fstab_portability if hasattr(args, 'no_fstab_portability') else True
+    # If apps-only is set, override this setting
+    if apps_only:
+        include_fstab_portability = False
+    
     if not include_fstab_portability:
         print("Portable fstab entries backup disabled")
     
@@ -429,7 +471,8 @@ def handle_backup(app: Migrator, args: argparse.Namespace) -> int:
         include_paths=include_paths,
         exclude_paths=exclude_paths,
         include_fstab_portability=include_fstab_portability,
-        include_repos=include_repos
+        include_repos=include_repos,
+        apps_only=apps_only
     )
     
     # Create backup

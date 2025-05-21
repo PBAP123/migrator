@@ -167,23 +167,62 @@ class SetupWizard:
             self._print_section("Backup Content Configuration")
             print("First, let's configure what content to include in your backups.\n")
             
-            # Ask about desktop environment configurations
-            self.user_config["include_desktop_configs"] = self._get_yes_no(
-                "Include desktop environment configurations?",
-                default=True
-            )
+            # Add backup mode selection
+            print("Select your preferred backup mode:")
+            print("1. Apps Only - Just backup installed applications list")
+            print("2. Standard - Apps + essential config files")
+            print("3. Complete - All apps and all configuration files")
             
-            # Ask about fstab entries
-            self.user_config["include_fstab_portability"] = self._get_yes_no(
-                "Include portable fstab entries (network shares)?",
-                default=True
-            )
+            backup_mode = ""
+            while backup_mode not in ["1", "2", "3"]:
+                backup_mode = self._get_input("Select backup mode (1-3)", default="2")
             
-            # Ask about including software repositories
-            self.user_config["include_repos"] = self._get_yes_no(
-                "Include software repositories (APT, DNF, PPAs, etc.)?",
-                default=True
-            )
+            if backup_mode == "1":
+                # Apps-only mode
+                self.user_config["backup_mode"] = "apps_only"
+                self.user_config["include_desktop_configs"] = False
+                self.user_config["include_fstab_portability"] = False
+                self.user_config["include_repos"] = True  # Still include repos for app installation
+                print("\nSelected Apps Only mode - will backup only your installed applications list.")
+            elif backup_mode == "2":
+                # Standard mode with just essential configs
+                self.user_config["backup_mode"] = "standard"
+                print("\nSelected Standard mode - will backup apps and essential configuration files.")
+                
+                # Now ask about specific configurations to include
+                self.user_config["include_repos"] = self._get_yes_no(
+                    "Include software repositories (APT, DNF, PPAs, etc.)?",
+                    default=True
+                )
+                
+                self.user_config["include_fstab_portability"] = self._get_yes_no(
+                    "Include portable fstab entries (network shares)?",
+                    default=True
+                )
+                
+                self.user_config["include_desktop_configs"] = False  # Default to false for standard mode
+            else:
+                # Complete mode with full configs
+                self.user_config["backup_mode"] = "complete"
+                print("\nSelected Complete mode - will backup all apps and configuration files.")
+                
+                # Ask about including software repositories
+                self.user_config["include_repos"] = self._get_yes_no(
+                    "Include software repositories (APT, DNF, PPAs, etc.)?",
+                    default=True
+                )
+                
+                # Ask about desktop environment configurations
+                self.user_config["include_desktop_configs"] = self._get_yes_no(
+                    "Include desktop environment configurations?",
+                    default=True
+                )
+                
+                # Ask about fstab entries
+                self.user_config["include_fstab_portability"] = self._get_yes_no(
+                    "Include portable fstab entries (network shares)?",
+                    default=True
+                )
             
             # Section 1.1: Custom Path Configuration
             self._print_section("Custom Path Configuration")
@@ -417,6 +456,16 @@ class SetupWizard:
             # Confirm settings
             self._print_section("Configuration Summary")
             print("Please review your configuration:")
+            
+            # Display backup mode
+            backup_mode = self.user_config.get("backup_mode", "standard")
+            if backup_mode == "apps_only":
+                print("• Backup mode: Apps Only (just installed applications)")
+            elif backup_mode == "standard":
+                print("• Backup mode: Standard (apps + essential configs)")
+            else:
+                print("• Backup mode: Complete (all apps and configurations)")
+                
             print(f"• Backup directory: {self.user_config['backup_dir']}")
             print(f"• Include desktop configurations: {'Yes' if self.user_config['include_desktop_configs'] else 'No'}")
             print(f"• Include portable fstab entries: {'Yes' if self.user_config['include_fstab_portability'] else 'No'}")
@@ -508,6 +557,9 @@ class SetupWizard:
         """
         # Save backup directory
         self.config.set_backup_dir(self.user_config["backup_dir"])
+        
+        # Save backup mode
+        self.config.set("backup_mode", self.user_config.get("backup_mode", "standard"))
         
         # Save other configuration values
         self.config.set("include_desktop_configs", self.user_config["include_desktop_configs"])
