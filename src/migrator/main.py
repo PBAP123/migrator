@@ -709,6 +709,17 @@ class Migrator:
         """
         return config.get_backup_dir()
         
+    def set_backup_dir(self, backup_dir: str) -> bool:
+        """Set the backup directory
+        
+        Args:
+            backup_dir: Path to the backup directory
+            
+        Returns:
+            Whether the operation was successful
+        """
+        return config.set_backup_dir(backup_dir)
+        
     def get_backup_retention_settings(self) -> Dict[str, Any]:
         """Get current backup retention settings
         
