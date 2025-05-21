@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Command-line interface for Migrator utility
+Main CLI entry point for Migrator
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published by
@@ -18,23 +18,25 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
 import sys
-import json
-import time
 import argparse
-import textwrap
-import platform
-import datetime
 import logging
-import fnmatch
-import subprocess
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
+import textwrap
+from typing import Any, Dict, List, Optional, Tuple
 
+# Make sure necessary directories exist
+data_dir = os.path.expanduser("~/.local/share/migrator")
+config_dir = os.path.expanduser("~/.config/migrator")
+
+for directory in [data_dir, config_dir]:
+    os.makedirs(directory, exist_ok=True)
+
+# Import application modules
 from migrator.main import Migrator
-from migrator.utils.service import create_systemd_service, remove_systemd_service
-from migrator.utils.setup_wizard import run_setup_wizard, setup_package_mappings
 from migrator.utils.config import config
+from migrator.utils.setup_wizard import run_setup_wizard, setup_package_mappings
+from migrator.utils.service import create_systemd_service, remove_systemd_service
 
+# Configure logger
 logger = logging.getLogger(__name__)
 
 def setup_argparse() -> argparse.ArgumentParser:

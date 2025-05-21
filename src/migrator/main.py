@@ -1312,96 +1312,65 @@ class Migrator:
                     target_pm = pkg_manager_map.get(target_pkg_format)
                     
                     if target_pm:
-                        # Process each package to find equivalents
-                        for pkg in cross_pm_packages:
+                        # Use batch processing with progress reporting
+                        print(f"Finding equivalent packages for {len(cross_pm_packages)} packages from {source_pkg_format} to {target_pkg_format}...")
+                        
+                        # Define a function to check if a package is available
+                        def is_available(pkg_name):
+                            return target_pm.is_package_available(pkg_name)
+                        
+                        # Process packages in batches
+                        results = self.package_mapper.process_package_batch(
+                            cross_pm_packages,
+                            source_pkg_format if source_pkg_format != "unknown" else source_pms_to_map[0] if source_pms_to_map else "apt",
+                            target_pkg_format,
+                            available_check_fn=is_available
+                        )
+                        
+                        mapped_count = 0
+                        for pkg, equivalent_name in results:
                             pkg_name = pkg.get('name', '')
-                            if not pkg_name:
-                                continue
-                                
                             pkg_source = pkg.get('source', source_pkg_format)
                             
-                            # Try to find an equivalent package in the target system
-                            equivalent_name = self.package_mapper.get_equivalent_package(
-                                pkg_name, pkg_source, target_pkg_format)
+                            if equivalent_name and target_pm.is_package_available(equivalent_name):
+                                # Create a new dict for the equivalent package
+                                equiv_pkg = pkg.copy()
+                                equiv_pkg['name'] = equivalent_name
+                                equiv_pkg['original_name'] = pkg_name
+                                equiv_pkg['original_source'] = pkg_source
+                                equiv_pkg['source'] = target_pkg_format
                                 
-                            if equivalent_name:
-                                # Check if the equivalent package is available in the target system
-                                if target_pm.is_package_available(equivalent_name):
-                                    # Create a new dict for the equivalent package
-                                    equiv_pkg = pkg.copy()
-                                    equiv_pkg['name'] = equivalent_name
-                                    equiv_pkg['original_name'] = pkg_name
-                                    equiv_pkg['original_source'] = pkg_source
-                                    equiv_pkg['source'] = target_pkg_format
+                                # Get the latest version available in target system
+                                latest_version = target_pm.get_latest_version(equivalent_name)
+                                if latest_version:
+                                    equiv_pkg['version'] = latest_version
                                     
-                                    # Get the latest version available in target system
-                                    latest_version = target_pm.get_latest_version(equivalent_name)
-                                    if latest_version:
-                                        equiv_pkg['version'] = latest_version
-                                        
-                                    # Add to available packages
-                                    available_packages.append(equiv_pkg)
+                                # Add to available packages
+                                available_packages.append(equiv_pkg)
+                                
+                                # Add installation command
+                                cmd = ""
+                                if target_pkg_format == "apt":
+                                    cmd = f"apt install -y {equivalent_name}"
+                                elif target_pkg_format == "dnf":
+                                    cmd = f"dnf install -y {equivalent_name}"
+                                elif target_pkg_format == "pacman":
+                                    cmd = f"pacman -S --noconfirm {equivalent_name}"
                                     
-                                    # Add installation command
-                                    cmd = ""
-                                    if target_pkg_format == "apt":
-                                        cmd = f"apt install -y {equivalent_name}"
-                                    elif target_pkg_format == "dnf":
-                                        cmd = f"dnf install -y {equivalent_name}"
-                                    elif target_pkg_format == "pacman":
-                                        cmd = f"pacman -S --noconfirm {equivalent_name}"
-                                        
-                                    installation_commands.append(
-                                        f"# Equivalent package for {pkg_name} ({pkg_source})\n{cmd}"
-                                    )
-                                    
-                                    logger.info(f"Found equivalent package: {pkg_name} ({pkg_source}) -> {equivalent_name} ({target_pkg_format})")
-                                else:
-                                    # Try to find a similar package with a slightly different name
-                                    similar_name = self.package_mapper.find_package_with_similar_name(
-                                        equivalent_name, 
-                                        target_pkg_format,
-                                        target_pm.is_package_available
-                                    )
-                                    
-                                    if similar_name:
-                                        # We found a similar named package that's available
-                                        equiv_pkg = pkg.copy()
-                                        equiv_pkg['name'] = similar_name
-                                        equiv_pkg['original_name'] = pkg_name
-                                        equiv_pkg['original_source'] = pkg_source
-                                        equiv_pkg['source'] = target_pkg_format
-                                        
-                                        # Get the latest version available
-                                        latest_version = target_pm.get_latest_version(similar_name)
-                                        if latest_version:
-                                            equiv_pkg['version'] = latest_version
-                                            
-                                        # Add to available packages
-                                        available_packages.append(equiv_pkg)
-                                        
-                                        # Add installation command
-                                        cmd = ""
-                                        if target_pkg_format == "apt":
-                                            cmd = f"apt install -y {similar_name}"
-                                        elif target_pkg_format == "dnf":
-                                            cmd = f"dnf install -y {similar_name}"
-                                        elif target_pkg_format == "pacman":
-                                            cmd = f"pacman -S --noconfirm {similar_name}"
-                                            
-                                        installation_commands.append(
-                                            f"# Similar package for {pkg_name} ({pkg_source})\n{cmd}"
-                                        )
-                                        
-                                        logger.info(f"Found similar package: {pkg_name} ({pkg_source}) -> {similar_name} ({target_pkg_format})")
-                                    else:
-                                        # Equivalent package mapping found but not available in repos
-                                        pkg['reason'] = f'Equivalent package {equivalent_name} not available in repositories'
-                                        unavailable_packages.append(pkg)
+                                installation_commands.append(
+                                    f"# Equivalent package for {pkg_name} ({pkg_source})\n{cmd}"
+                                )
+                                
+                                mapped_count += 1
+                                logger.info(f"Found equivalent package: {pkg_name} ({pkg_source}) -> {equivalent_name} ({target_pkg_format})")
                             else:
-                                # No equivalent package found
-                                pkg['reason'] = f'No equivalent package found for {target_pkg_format}'
+                                # No equivalent package found or not available
+                                reason = "No equivalent package found" if not equivalent_name else f"Equivalent package {equivalent_name} not available in repositories"
+                                pkg['reason'] = f'{reason} for {target_pkg_format}'
                                 unavailable_packages.append(pkg)
+                        
+                        logger.info(f"Successfully mapped {mapped_count} out of {len(cross_pm_packages)} packages")
+                        print(f"Successfully mapped {mapped_count} out of {len(cross_pm_packages)} packages")
                     else:
                         logger.warning(f"Target package manager {target_pkg_format} not found")
             

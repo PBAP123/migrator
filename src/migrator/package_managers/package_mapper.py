@@ -7,7 +7,9 @@ import logging
 import os
 import json
 import re
-from typing import Dict, List, Optional, Tuple, Any
+import time
+import sys
+from typing import Dict, List, Optional, Tuple, Any, Callable
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ class PackageMapper:
     def __init__(self):
         self.equiv_map = {}
         self.load_equivalence_map()
+        self.search_cache = {}  # Cache for package search results
         
     def load_equivalence_map(self):
         """Load the package equivalence map from built-in data and user customizations"""
@@ -161,6 +164,80 @@ class PackageMapper:
                 logger.info(f"Loaded {len(user_map)} custom package mappings from {user_map_path}")
             except Exception as e:
                 logger.error(f"Error loading custom package mappings: {e}")
+    
+    def process_package_batch(self, packages: List[Dict], source_type: str, target_type: str, 
+                             available_check_fn: Callable = None, 
+                             progress_callback: Callable = None) -> List[Tuple[Dict, Optional[str]]]:
+        """Process a batch of packages to find equivalent names
+        
+        Args:
+            packages: List of package dictionaries
+            source_type: Source package manager type
+            target_type: Target package manager type
+            available_check_fn: Function to check if a package is available
+            progress_callback: Function to report progress
+            
+        Returns:
+            List of tuples containing (original package dict, equivalent package name or None)
+        """
+        results = []
+        total_packages = len(packages)
+        
+        # Print initial progress message
+        if progress_callback:
+            progress_callback(0, total_packages, "Starting package mapping")
+        else:
+            print(f"Finding equivalent packages: 0/{total_packages} (0%)")
+            sys.stdout.flush()
+        
+        # Keep track of last progress update time to avoid too frequent updates
+        last_update_time = time.time()
+        
+        # Process each package
+        for i, pkg in enumerate(packages):
+            pkg_name = pkg.get('name', '')
+            if not pkg_name:
+                results.append((pkg, None))
+                continue
+                
+            # Find equivalent package name
+            equivalent_name = self.get_equivalent_package(
+                pkg_name, source_type, target_type)
+                
+            # Check if the equivalent package is available (if a check function was provided)
+            if equivalent_name and available_check_fn and not available_check_fn(equivalent_name):
+                # Try to find a similar package
+                similar_name = self.find_package_with_similar_name(
+                    equivalent_name, target_type, available_check_fn)
+                
+                if similar_name:
+                    equivalent_name = similar_name
+                else:
+                    # If no similar package found, just keep the equivalent name
+                    # The calling code will handle it as unavailable
+                    pass
+            
+            # Add result
+            results.append((pkg, equivalent_name))
+            
+            # Update progress
+            current_time = time.time()
+            if current_time - last_update_time >= 0.5 or i == total_packages - 1:  # Update every 0.5s or last item
+                progress_percent = (i + 1) / total_packages * 100
+                
+                if progress_callback:
+                    progress_callback(i + 1, total_packages, f"Mapped {i + 1}/{total_packages} packages")
+                else:
+                    print(f"\rFinding equivalent packages: {i + 1}/{total_packages} ({progress_percent:.1f}%)", end="")
+                    sys.stdout.flush()
+                
+                last_update_time = current_time
+        
+        # Final progress update
+        if not progress_callback:
+            print()  # Add newline after progress reporting
+        
+        return results
     
     def get_equivalent_package(self, pkg_name: str, source_type: str, target_type: str) -> Optional[str]:
         """Get the equivalent package name in a different package manager
@@ -355,10 +432,25 @@ class PackageMapper:
                 return var
                 
         # Try to search for package
-        return self._search_for_package(pkg_name, target_type)
+        cache_key = f"{target_type}:{pkg_name}"
+        if cache_key in self.search_cache:
+            return self.search_cache[cache_key]
+            
+        result = self._search_for_package(pkg_name, target_type, timeout=3)
+        self.search_cache[cache_key] = result
+        return result
         
-    def _search_for_package(self, pkg_name: str, target_type: str) -> Optional[str]:
-        """Search for a package by name in the target package manager"""
+    def _search_for_package(self, pkg_name: str, target_type: str, timeout: int = 5) -> Optional[str]:
+        """Search for a package by name in the target package manager
+        
+        Args:
+            pkg_name: Package name to search for
+            target_type: Target package manager type
+            timeout: Timeout in seconds for the search command
+            
+        Returns:
+            Found package name or None
+        """
         search_cmd = None
         if target_type == 'apt':
             search_cmd = ['apt-cache', 'search', '--names-only', pkg_name]
@@ -371,13 +463,14 @@ class PackageMapper:
             return None
             
         try:
-            # Run the search command
+            # Run the search command with timeout
             result = subprocess.run(
                 search_cmd, 
                 stdout=subprocess.PIPE, 
                 stderr=subprocess.PIPE,
                 text=True,
-                check=False
+                check=False,
+                timeout=timeout  # Add timeout to prevent hanging
             )
             
             if result.returncode != 0:
@@ -421,7 +514,11 @@ class PackageMapper:
                             elif pkg_name.lower() in pkg.lower():
                                 # Partial match
                                 return pkg
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Search for package {pkg_name} timed out after {timeout} seconds")
+            return None
         except Exception as e:
             logger.error(f"Error searching for package {pkg_name}: {e}")
+            return None
             
         return None 
