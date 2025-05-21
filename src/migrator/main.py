@@ -51,12 +51,15 @@ from .utils.progress import ProgressTracker, MultiProgressTracker, OperationType
 from .utils.repositories import RepositoryManager, Repository
 
 # Configure logging
+log_dir = os.path.expanduser("~/.local/share/migrator")
+os.makedirs(log_dir, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.expanduser("~/.local/share/migrator/migrator.log"))
+        logging.FileHandler(os.path.join(log_dir, "migrator.log"))
     ]
 )
 
