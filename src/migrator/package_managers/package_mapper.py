@@ -195,30 +195,47 @@ class PackageMapper:
         
         # Process each package
         for i, pkg in enumerate(packages):
-            pkg_name = pkg.get('name', '')
-            if not pkg_name:
-                results.append((pkg, None))
-                continue
-                
-            # Find equivalent package name
-            equivalent_name = self.get_equivalent_package(
-                pkg_name, source_type, target_type)
-                
-            # Check if the equivalent package is available (if a check function was provided)
-            if equivalent_name and available_check_fn and not available_check_fn(equivalent_name):
-                # Try to find a similar package
-                similar_name = self.find_package_with_similar_name(
-                    equivalent_name, target_type, available_check_fn)
-                
-                if similar_name:
-                    equivalent_name = similar_name
+            try:
+                # Extract package name, handling various package formats
+                if isinstance(pkg, dict):
+                    pkg_name = pkg.get('name', '')
+                elif isinstance(pkg, str):
+                    pkg_name = pkg
                 else:
-                    # If no similar package found, just keep the equivalent name
-                    # The calling code will handle it as unavailable
-                    pass
-            
-            # Add result
-            results.append((pkg, equivalent_name))
+                    # Try to convert to string if not dict or string
+                    try:
+                        pkg_name = str(pkg)
+                    except:
+                        pkg_name = ''
+                    
+                if not pkg_name:
+                    results.append((pkg, None))
+                    continue
+                    
+                # Find equivalent package name
+                equivalent_name = self.get_equivalent_package(
+                    pkg_name, source_type, target_type)
+                    
+                # Check if the equivalent package is available (if a check function was provided)
+                if equivalent_name and available_check_fn and not available_check_fn(equivalent_name):
+                    # Try to find a similar package
+                    similar_name = self.find_package_with_similar_name(
+                        equivalent_name, target_type, available_check_fn)
+                    
+                    if similar_name:
+                        equivalent_name = similar_name
+                    else:
+                        # If no similar package found, just keep the equivalent name
+                        # The calling code will handle it as unavailable
+                        pass
+                
+                # Add result
+                results.append((pkg, equivalent_name))
+            except Exception as e:
+                # Log the error but continue processing the batch
+                logger.error(f"Error mapping package {pkg if isinstance(pkg, str) else str(pkg)[:30]}: {e}")
+                # Add the errored package to results with no equivalent
+                results.append((pkg, None))
             
             # Update progress
             current_time = time.time()

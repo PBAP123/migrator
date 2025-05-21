@@ -1221,6 +1221,10 @@ class Migrator:
                     grouped_packages[source] = []
                 grouped_packages[source].append(pkg)
             
+            # Count the total unique packages
+            total_unique_packages = sum(len(pkgs) for pkgs in grouped_packages.values())
+            logger.info(f"Grouped into {len(grouped_packages)} package sources with {total_unique_packages} total packages")
+            
             # Prepare package manager mapping for lookup
             pkg_manager_map = {}
             for pm in self.package_managers:
@@ -1232,21 +1236,45 @@ class Migrator:
             
             # Determine source and target package formats based on distro
             source_pkg_format = "unknown"
-            if source_distro_id in ["ubuntu", "debian"] or any(id in source_distro_id for id in ["ubuntu", "debian"]):
-                source_pkg_format = "apt"
-            elif source_distro_id in ["fedora", "rhel", "centos"] or any(id in source_distro_id for id in ["fedora", "rhel", "centos"]):
-                source_pkg_format = "dnf"
-            elif source_distro_id in ["arch", "manjaro"] or any(id in source_distro_id for id in ["arch", "manjaro"]):
-                source_pkg_format = "pacman"
-            # If source_pkg_format is still unknown but we have apt packages in the backup, assume apt
-            elif 'apt' in grouped_packages:
-                source_pkg_format = "apt"
-            # Similarly for dnf and pacman
-            elif 'dnf' in grouped_packages:
-                source_pkg_format = "dnf"
-            elif 'pacman' in grouped_packages:
-                source_pkg_format = "pacman"
-                
+            # Try getting distro info directly from backup metadata first (most accurate)
+            if "distro_id" in backup_data.get("backup_metadata", {}):
+                source_distro_id = backup_data.get("backup_metadata", {}).get("distro_id", "").lower()
+                # Match common distro patterns
+                if source_distro_id in ["ubuntu", "debian", "linuxmint", "pop", "elementary"] or \
+                   any(id in source_distro_id for id in ["ubuntu", "debian", "mint"]):
+                    source_pkg_format = "apt"
+                elif source_distro_id in ["fedora", "rhel", "centos", "rocky", "alma"] or \
+                     any(id in source_distro_id for id in ["fedora", "rhel", "centos"]):
+                    source_pkg_format = "dnf"
+                elif source_distro_id in ["arch", "manjaro", "endeavour"] or \
+                     any(id in source_distro_id for id in ["arch", "manjaro"]):
+                    source_pkg_format = "pacman"
+            
+            # If we couldn't determine from the distro_id, fall back to examining packages
+            if source_pkg_format == "unknown":
+                if 'apt' in grouped_packages and len(grouped_packages.get('apt', [])) > 0:
+                    source_pkg_format = "apt"
+                    # Try to infer the distro name for better logs
+                    if source_distro_id == "unknown":
+                        for pkg in grouped_packages.get('apt', []):
+                            if isinstance(pkg, dict) and pkg.get('name') in ['ubuntu-minimal', 'ubuntu-standard']:
+                                source_distro_id = "ubuntu"
+                                break
+                            elif isinstance(pkg, dict) and pkg.get('name') in ['debian-system']:
+                                source_distro_id = "debian"
+                                break
+                elif 'dnf' in grouped_packages and len(grouped_packages.get('dnf', [])) > 0:
+                    source_pkg_format = "dnf"
+                    if source_distro_id == "unknown":
+                        for pkg in grouped_packages.get('dnf', []):
+                            if isinstance(pkg, dict) and 'fedora' in pkg.get('name', '').lower():
+                                source_distro_id = "fedora"
+                                break
+                elif 'pacman' in grouped_packages and len(grouped_packages.get('pacman', [])) > 0:
+                    source_pkg_format = "pacman"
+                    if source_distro_id == "unknown":
+                        source_distro_id = "arch"
+            
             target_pkg_format = "unknown"
             for pm in self.package_managers:
                 if pm.name in ["apt", "dnf", "pacman"]:
@@ -1291,86 +1319,132 @@ class Migrator:
                 
                 # Add packages from the source package format that need mapping
                 if source_pkg_format != "unknown" and source_pkg_format in grouped_packages:
+                    # Store initial length before adding packages
+                    initial_len = len(cross_pm_packages)
                     cross_pm_packages.extend(grouped_packages[source_pkg_format])
+                    source_format_packages = len(grouped_packages[source_pkg_format])
+                    logger.info(f"DEBUG: Added {source_format_packages} packages from source format {source_pkg_format}")
                     processed_sources.add(source_pkg_format)
                     
                 # Add packages from specific source package managers that aren't available
                 for source_pm in source_pms_to_map:
-                    if source_pm in grouped_packages:
+                    # Skip if we've already processed this source (prevents double-counting)
+                    if source_pm in grouped_packages and source_pm not in processed_sources:
+                        current_len = len(cross_pm_packages)
+                        source_pm_packages = len(grouped_packages[source_pm])
                         cross_pm_packages.extend(grouped_packages[source_pm])
+                        logger.info(f"DEBUG: Added {source_pm_packages} packages from source PM {source_pm}")
                         processed_sources.add(source_pm)
+                    elif source_pm in processed_sources:
+                        logger.info(f"DEBUG: Skipping already processed source PM {source_pm}")
                     
                 # Also check packages from 'unknown' source if any
-                if 'unknown' in grouped_packages:
+                if 'unknown' in grouped_packages and 'unknown' not in processed_sources:
+                    current_len = len(cross_pm_packages)
+                    unknown_packages = len(grouped_packages.get('unknown', []))
                     cross_pm_packages.extend(grouped_packages.get('unknown', []))
+                    logger.info(f"DEBUG: Added {unknown_packages} packages from 'unknown' source")
                     processed_sources.add('unknown')
+                elif 'unknown' in processed_sources:
+                    logger.info(f"DEBUG: Skipping already processed 'unknown' source")
+                
+                # Debug: Log the package count before checking equivalences
+                actual_pkg_count = len(cross_pm_packages)
+                logger.info(f"DEBUG: Actual cross_pm_packages count: {actual_pkg_count}")
+                # Debug: Log first few package entries to see structure
+                if cross_pm_packages:
+                    for i in range(min(5, len(cross_pm_packages))):
+                        logger.info(f"DEBUG: Sample package {i}: {cross_pm_packages[i]}")
                 
                 if cross_pm_packages:
-                    logger.info(f"Checking {len(cross_pm_packages)} packages for equivalence mapping")
+                    # Log the actual count of packages we're checking
+                    pkg_count = len(cross_pm_packages)
+                    logger.info(f"Checking {pkg_count} packages for equivalence mapping")
+                    print(f"Finding equivalent packages for {pkg_count} packages from {source_pkg_format} to {target_pkg_format}...")
                     
                     # Get the target package manager
                     target_pm = pkg_manager_map.get(target_pkg_format)
                     
                     if target_pm:
                         # Use batch processing with progress reporting
-                        print(f"Finding equivalent packages for {len(cross_pm_packages)} packages from {source_pkg_format} to {target_pkg_format}...")
+                        print(f"Finding equivalent packages for {pkg_count} packages from {source_pkg_format} to {target_pkg_format}...")
                         
                         # Define a function to check if a package is available
                         def is_available(pkg_name):
                             return target_pm.is_package_available(pkg_name)
                         
                         # Process packages in batches
-                        results = self.package_mapper.process_package_batch(
-                            cross_pm_packages,
-                            source_pkg_format if source_pkg_format != "unknown" else source_pms_to_map[0] if source_pms_to_map else "apt",
-                            target_pkg_format,
-                            available_check_fn=is_available
-                        )
-                        
-                        mapped_count = 0
-                        for pkg, equivalent_name in results:
-                            pkg_name = pkg.get('name', '')
-                            pkg_source = pkg.get('source', source_pkg_format)
+                        try:
+                            results = self.package_mapper.process_package_batch(
+                                cross_pm_packages,
+                                source_pkg_format if source_pkg_format != "unknown" else source_pms_to_map[0] if source_pms_to_map else "apt",
+                                target_pkg_format,
+                                available_check_fn=is_available
+                            )
                             
-                            if equivalent_name and target_pm.is_package_available(equivalent_name):
-                                # Create a new dict for the equivalent package
-                                equiv_pkg = pkg.copy()
-                                equiv_pkg['name'] = equivalent_name
-                                equiv_pkg['original_name'] = pkg_name
-                                equiv_pkg['original_source'] = pkg_source
-                                equiv_pkg['source'] = target_pkg_format
+                            mapped_count = 0
+                            for pkg, equivalent_name in results:
+                                # Ensure pkg is a dictionary before accessing keys
+                                if isinstance(pkg, dict):
+                                    pkg_name = pkg.get('name', '')
+                                    pkg_source = pkg.get('source', source_pkg_format)
+                                else:
+                                    # Handle if pkg is unexpectedly a string or other type
+                                    pkg_name = str(pkg)
+                                    pkg_source = source_pkg_format
                                 
-                                # Get the latest version available in target system
-                                latest_version = target_pm.get_latest_version(equivalent_name)
-                                if latest_version:
-                                    equiv_pkg['version'] = latest_version
+                                if equivalent_name and target_pm.is_package_available(equivalent_name):
+                                    # Create a new dict for the equivalent package
+                                    if isinstance(pkg, dict):
+                                        equiv_pkg = pkg.copy()
+                                    else:
+                                        equiv_pkg = {'name': pkg_name, 'source': pkg_source}
                                     
-                                # Add to available packages
-                                available_packages.append(equiv_pkg)
-                                
-                                # Add installation command
-                                cmd = ""
-                                if target_pkg_format == "apt":
-                                    cmd = f"apt install -y {equivalent_name}"
-                                elif target_pkg_format == "dnf":
-                                    cmd = f"dnf install -y {equivalent_name}"
-                                elif target_pkg_format == "pacman":
-                                    cmd = f"pacman -S --noconfirm {equivalent_name}"
+                                    equiv_pkg['name'] = equivalent_name
+                                    equiv_pkg['original_name'] = pkg_name
+                                    equiv_pkg['original_source'] = pkg_source
+                                    equiv_pkg['source'] = target_pkg_format
                                     
-                                installation_commands.append(
-                                    f"# Equivalent package for {pkg_name} ({pkg_source})\n{cmd}"
-                                )
-                                
-                                mapped_count += 1
-                                logger.info(f"Found equivalent package: {pkg_name} ({pkg_source}) -> {equivalent_name} ({target_pkg_format})")
-                            else:
-                                # No equivalent package found or not available
-                                reason = "No equivalent package found" if not equivalent_name else f"Equivalent package {equivalent_name} not available in repositories"
-                                pkg['reason'] = f'{reason} for {target_pkg_format}'
-                                unavailable_packages.append(pkg)
-                        
-                        logger.info(f"Successfully mapped {mapped_count} out of {len(cross_pm_packages)} packages")
-                        print(f"Successfully mapped {mapped_count} out of {len(cross_pm_packages)} packages")
+                                    # Get the latest version available in target system
+                                    latest_version = target_pm.get_latest_version(equivalent_name)
+                                    if latest_version:
+                                        equiv_pkg['version'] = latest_version
+                                        
+                                    # Add to available packages
+                                    available_packages.append(equiv_pkg)
+                                    
+                                    # Add installation command
+                                    cmd = ""
+                                    if target_pkg_format == "apt":
+                                        cmd = f"apt install -y {equivalent_name}"
+                                    elif target_pkg_format == "dnf":
+                                        cmd = f"dnf install -y {equivalent_name}"
+                                    elif target_pkg_format == "pacman":
+                                        cmd = f"pacman -S --noconfirm {equivalent_name}"
+                                        
+                                    installation_commands.append(
+                                        f"# Equivalent package for {pkg_name} ({pkg_source})\n{cmd}"
+                                    )
+                                    
+                                    mapped_count += 1
+                                    logger.info(f"Found equivalent package: {pkg_name} ({pkg_source}) -> {equivalent_name} ({target_pkg_format})")
+                                else:
+                                    # No equivalent package found or not available
+                                    if isinstance(pkg, dict):
+                                        pkg_dict = pkg
+                                    else:
+                                        pkg_dict = {'name': pkg_name, 'source': pkg_source}
+                                    
+                                    reason = "No equivalent package found" if not equivalent_name else f"Equivalent package {equivalent_name} not available in repositories"
+                                    pkg_dict['reason'] = f'{reason} for {target_pkg_format}'
+                                    unavailable_packages.append(pkg_dict)
+                            
+                            logger.info(f"Successfully mapped {mapped_count} out of {pkg_count} packages")
+                            print(f"Successfully mapped {mapped_count} out of {pkg_count} packages")
+                        except Exception as e:
+                            logger.error(f"Error during package mapping: {e}")
+                            print(f"Error during package mapping: {e}")
+                            # Continue with the remaining package sources even if this mapping fails
                     else:
                         logger.warning(f"Target package manager {target_pkg_format} not found")
             
@@ -1382,6 +1456,42 @@ class Migrator:
                     
                     # Add a comment indicating the source type
                     installation_commands.append(f"# {source.upper()} Packages ({len(pkgs)} packages from backup)")
+                    
+                    # Special handling for Flatpak
+                    if source == 'flatpak':
+                        logger.info(f"Processing {len(pkgs)} Flatpak packages")
+                        flat_available = []
+                        flat_unavailable = []
+                        flat_commands = []
+                        
+                        # Process each flatpak package
+                        for pkg in pkgs:
+                            if isinstance(pkg, dict):
+                                pkg_name = pkg.get('name', '')
+                            else:
+                                pkg_name = str(pkg)
+                                pkg = {'name': pkg_name, 'source': 'flatpak'}
+                                
+                            if not pkg_name:
+                                continue
+                                
+                            # Check if available
+                            if pkg_manager.is_package_available(pkg_name):
+                                flat_available.append(pkg)
+                                # Add install command
+                                flat_commands.append(f"flatpak install -y flathub {pkg_name}")
+                            else:
+                                pkg['reason'] = "Not available in configured Flatpak remotes"
+                                flat_unavailable.append(pkg)
+                        
+                        # Add to our overall lists
+                        available_packages.extend(flat_available)
+                        unavailable_packages.extend(flat_unavailable)
+                        installation_commands.extend(flat_commands)
+                        
+                        logger.info(f"Processed Flatpak: {len(flat_available)} available, {len(flat_unavailable)} unavailable")
+                        processed_sources.add(source)
+                        continue
                     
                     # Get list of available packages and potential installation commands
                     try:
