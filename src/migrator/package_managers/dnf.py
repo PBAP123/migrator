@@ -7,12 +7,22 @@ import subprocess
 import re
 import os
 import logging
-from typing import List, Optional, Dict, Any
+import json
+import time
+import multiprocessing
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
+from pathlib import Path
+from functools import partial
 
 from .base import PackageManager, Package
 
 logger = logging.getLogger(__name__)
+
+# Number of packages to process in each batch
+BATCH_SIZE = 50
+# Number of parallel processes to use (default to CPU count or 4, whichever is lower)
+NUM_PROCESSES = min(multiprocessing.cpu_count(), 4)
 
 class DnfPackageManager(PackageManager):
     """Package manager for DNF (Fedora, RHEL, CentOS, etc.)"""
@@ -31,6 +41,15 @@ class DnfPackageManager(PackageManager):
         import sys
         if sys.maxsize > 2**32:
             self.max_timestamp = 2524608000  # Max for 64-bit (~2050)
+            
+        # Initialize package availability cache
+        self.availability_cache = {}
+        self.cache_timestamp = 0
+        self.cache_path = Path(os.path.expanduser("~/.cache/migrator/dnf_packages.json"))
+        self._load_availability_cache()
+        
+        # Version cache to avoid redundant queries
+        self.version_cache = {}
     
     def _check_sudo(self) -> bool:
         """Check if we have sudo privileges"""
@@ -62,6 +81,71 @@ class DnfPackageManager(PackageManager):
                 return DummyResult()
             # Re-raise other errors
             raise
+    
+    def _load_availability_cache(self):
+        """Load package availability cache from file"""
+        try:
+            if self.cache_path.exists():
+                with open(self.cache_path, 'r') as f:
+                    cache_data = json.load(f)
+                    self.availability_cache = cache_data.get('packages', {})
+                    self.cache_timestamp = cache_data.get('timestamp', 0)
+                    
+                    # Check if cache is fresh (less than 1 hour old)
+                    if time.time() - self.cache_timestamp > 3600:
+                        logger.info("Package availability cache is older than 1 hour, will validate freshness")
+                        self._check_cache_freshness()
+                    else:
+                        logger.info(f"Loaded availability cache with {len(self.availability_cache)} packages")
+        except Exception as e:
+            logger.warning(f"Could not load package availability cache: {e}")
+            # Initialize empty cache
+            self.availability_cache = {}
+            self.cache_timestamp = 0
+    
+    def _save_availability_cache(self):
+        """Save package availability cache to file"""
+        try:
+            # Create cache directory if it doesn't exist
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            cache_data = {
+                'timestamp': time.time(),
+                'packages': self.availability_cache
+            }
+            
+            with open(self.cache_path, 'w') as f:
+                json.dump(cache_data, f)
+                
+            logger.info(f"Saved availability cache with {len(self.availability_cache)} packages")
+        except Exception as e:
+            logger.warning(f"Could not save package availability cache: {e}")
+    
+    def _check_cache_freshness(self):
+        """Check if the cache is still valid by checking DNF repository timestamp"""
+        try:
+            # Get timestamp of the DNF repository metadata
+            cmd = [self.dnf_path, 'repoquery', '--refresh', '--refresh-timeout=1', '--cacheonly']
+            result = self._safe_run_rpm_command(cmd, check=False)
+            
+            # If repoquery is successful with cacheonly, the cache is fresh enough
+            if result.returncode == 0:
+                # Update our cache timestamp but keep the data
+                self.cache_timestamp = time.time()
+                logger.info("Repository metadata is fresh, keeping package cache")
+                return True
+            
+            # If repoquery fails, we need to update the repo data and invalidate our cache
+            logger.info("Repository metadata needs update, clearing package cache")
+            self.availability_cache = {}
+            self.cache_timestamp = 0
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Error checking cache freshness: {e}, clearing cache to be safe")
+            self.availability_cache = {}
+            self.cache_timestamp = 0
+            return False
     
     def list_installed_packages(self) -> List[Package]:
         """List all packages installed via DNF/RPM"""
@@ -185,11 +269,26 @@ class DnfPackageManager(PackageManager):
     
     def is_package_available(self, package_name: str) -> bool:
         """Check if a package is available in the DNF repositories"""
+        # Check cache first
+        if package_name in self.availability_cache:
+            return self.availability_cache[package_name]
+            
         try:
             cmd = [self.dnf_path, 'info', package_name]
             result = self._safe_run_rpm_command(cmd, check=False)
-            return result.returncode == 0 and "Available Packages" in result.stdout
+            is_available = result.returncode == 0 and "Available Packages" in result.stdout
+            
+            # Cache the result
+            self.availability_cache[package_name] = is_available
+            
+            # Periodically save the cache (every 50 new entries)
+            if len(self.availability_cache) % 50 == 0:
+                self._save_availability_cache()
+                
+            return is_available
         except subprocess.SubprocessError:
+            # On error, cache as not available
+            self.availability_cache[package_name] = False
             return False
     
     def get_package_info(self, package_name: str) -> Optional[Package]:
@@ -249,12 +348,17 @@ class DnfPackageManager(PackageManager):
     
     def get_latest_version(self, package_name: str) -> Optional[str]:
         """Get the latest available version of a package"""
+        # Check cache first
+        if package_name in self.version_cache:
+            return self.version_cache[package_name]
+            
         try:
             # Use DNF info to get the available version
             cmd = [self.dnf_path, 'info', package_name]
             result = self._safe_run_rpm_command(cmd, check=False)
             
             if result.returncode != 0:
+                self.version_cache[package_name] = None
                 return None
             
             # Parse the output for the available version
@@ -263,49 +367,148 @@ class DnfPackageManager(PackageManager):
                 if "Available Packages" in line:
                     available_section = True
                 elif available_section and line.startswith("Version"):
-                    return line.split(":", 1)[1].strip()
+                    version = line.split(":", 1)[1].strip()
+                    self.version_cache[package_name] = version
+                    return version
             
+            self.version_cache[package_name] = None
             return None
             
         except subprocess.SubprocessError:
+            self.version_cache[package_name] = None
             return None
     
-    def is_version_available(self, package_name: str, version: str) -> bool:
-        """Check if a specific version of a package is available"""
+    def batch_get_latest_versions(self, package_names: List[str]) -> Dict[str, Optional[str]]:
+        """Get the latest available versions for multiple packages in a single operation"""
+        if not package_names:
+            return {}
+            
+        # Remove packages already in cache
+        packages_to_check = [pkg for pkg in package_names if pkg not in self.version_cache]
+        if not packages_to_check:
+            return {pkg: self.version_cache.get(pkg) for pkg in package_names}
+            
+        results = {}
         try:
-            # DNF supports listing all available versions with the --showduplicates flag
-            cmd = [self.dnf_path, 'list', '--showduplicates', package_name]
+            # Use DNF list to get available versions for multiple packages at once
+            cmd = [self.dnf_path, 'list', 'available'] + packages_to_check
             result = self._safe_run_rpm_command(cmd, check=False)
             
             if result.returncode != 0:
-                return False
+                # Mark all as not found
+                for pkg in packages_to_check:
+                    self.version_cache[pkg] = None
+                return {pkg: self.version_cache.get(pkg) for pkg in package_names}
             
-            # Parse output to find all available versions
-            available_versions = []
+            # Parse the output for available versions
+            for line in result.stdout.splitlines():
+                if not line.strip() or line.startswith('Last metadata') or line.startswith('Available Packages'):
+                    continue
+                    
+                parts = line.split()
+                if len(parts) >= 2:
+                    # The first part should be package name, second part is version
+                    pkg_name_arch = parts[0]
+                    pkg_name = pkg_name_arch.split('.')[0]  # Remove architecture suffix
+                    version = parts[1]
+                    
+                    if pkg_name in packages_to_check:
+                        self.version_cache[pkg_name] = version
+                        results[pkg_name] = version
+            
+            # Mark all packages that weren't found in the output as None
+            for pkg in packages_to_check:
+                if pkg not in results:
+                    self.version_cache[pkg] = None
+                    
+            # Combine with existing cache data
+            return {pkg: self.version_cache.get(pkg) for pkg in package_names}
+            
+        except Exception as e:
+            logger.error(f"Error in batch version check: {e}")
+            # Mark all as not found on error
+            for pkg in packages_to_check:
+                self.version_cache[pkg] = None
+            return {pkg: self.version_cache.get(pkg) for pkg in package_names}
+    
+    def batch_check_versions_available(self, packages: List[Tuple[str, str]]) -> Dict[str, bool]:
+        """Check if specific versions are available for multiple packages at once
+        
+        Args:
+            packages: List of (package_name, version) tuples
+            
+        Returns:
+            Dict mapping package names to boolean indicating if the version is available
+        """
+        if not packages:
+            return {}
+            
+        results = {}
+        try:
+            # Get all package names
+            package_names = [pkg[0] for pkg in packages]
+            
+            # Use DNF list with --showduplicates to get all available versions
+            cmd = [self.dnf_path, 'list', '--showduplicates'] + package_names
+            result = self._safe_run_rpm_command(cmd, check=False)
+            
+            if result.returncode != 0:
+                # Mark all as not available
+                return {pkg[0]: False for pkg in packages}
+            
+            # Parse output to map each package to its available versions
+            package_versions = {}
+            current_pkg = None
             available_section = False
             
             for line in result.stdout.splitlines():
                 if "Available Packages" in line:
                     available_section = True
                     continue
+                    
+                if not available_section or not line.strip():
+                    continue
+                    
+                parts = line.split()
+                if len(parts) >= 2:
+                    pkg_name_arch = parts[0]
+                    pkg_name = pkg_name_arch.split('.')[0]  # Remove architecture suffix
+                    ver = parts[1].strip()
+                    
+                    if pkg_name in package_names:
+                        if pkg_name not in package_versions:
+                            package_versions[pkg_name] = []
+                        package_versions[pkg_name].append(ver)
+            
+            # Check each requested package/version against available versions
+            for pkg_name, version in packages:
+                if pkg_name not in package_versions:
+                    results[pkg_name] = False
+                    continue
+                    
+                # Check if the version is in the list
+                available_versions = package_versions[pkg_name]
+                version_available = False
                 
-                if available_section and package_name in line:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        # Extract the version from the second column
-                        ver = parts[1].strip()
-                        available_versions.append(ver)
+                for available in available_versions:
+                    if available.startswith(version) or version.startswith(available):
+                        version_available = True
+                        break
+                        
+                results[pkg_name] = version_available
+                
+            return results
             
-            # Check if our version is in the list
-            # Note: DNF versions may include .el8, .fc35, etc. at the end
-            for available in available_versions:
-                if available.startswith(version) or version.startswith(available):
-                    return True
-            
-            return False
-            
-        except subprocess.SubprocessError:
-            return False
+        except Exception as e:
+            logger.error(f"Error in batch version availability check: {e}")
+            # Mark all as not available on error
+            return {pkg[0]: False for pkg in packages}
+    
+    def is_version_available(self, package_name: str, version: str) -> bool:
+        """Check if a specific version of a package is available"""
+        # Use batch check for a single package
+        result = self.batch_check_versions_available([(package_name, version)])
+        return result.get(package_name, False)
     
     def install_package(self, package_name: str, version: Optional[str] = None) -> bool:
         """Install a package using DNF"""
@@ -328,6 +531,150 @@ class DnfPackageManager(PackageManager):
         except subprocess.SubprocessError as e:
             logger.error(f"Error installing package {package_name}: {e}")
             return False
+    
+    def populate_bulk_availability_cache(self, package_names: List[str]):
+        """Efficiently populate the availability cache for multiple packages at once
+        
+        This is much faster than calling is_package_available individually for each package
+        """
+        if not package_names:
+            return
+            
+        logger.info(f"Bulk checking availability for {len(package_names)} packages...")
+        
+        try:
+            # Get a list of all available packages from DNF repositories
+            cmd = [self.dnf_path, 'repoquery', '--available', '--queryformat', '%{name}']
+            result = self._safe_run_rpm_command(cmd, check=False)
+            
+            if result.returncode == 0:
+                available_pkgs = set(result.stdout.splitlines())
+                
+                # Update cache for all requested packages
+                for pkg_name in package_names:
+                    self.availability_cache[pkg_name] = pkg_name in available_pkgs
+                
+                # Save the cache
+                self.cache_timestamp = time.time()
+                self._save_availability_cache()
+                
+                logger.info(f"Bulk availability check complete, {len(available_pkgs)} packages available")
+            else:
+                logger.warning("Bulk availability check failed, falling back to individual checks")
+        except Exception as e:
+            logger.warning(f"Error during bulk availability check: {e}")
+    
+    def _process_package_batch(self, packages: List[Dict[str, Any]]) -> Tuple[List, List, List, List]:
+        """Process a batch of packages for availability and versions
+        
+        This function is designed to be run in a separate process.
+        
+        Args:
+            packages: List of package dictionaries to process
+            
+        Returns:
+            Tuple of (available_packages, unavailable_packages, upgradable_packages, commands)
+        """
+        available_packages = []
+        unavailable_packages = []
+        upgradable_packages = []
+        commands = []
+        
+        # Extract package names
+        package_names = [pkg.get('name', '') for pkg in packages if pkg.get('name', '')]
+        
+        # Get available packages (should already be in cache from bulk check)
+        available_package_names = [
+            name for name in package_names 
+            if name and self.availability_cache.get(name, False)
+        ]
+        
+        # Mark unavailable packages
+        for pkg in packages:
+            name = pkg.get('name', '')
+            if not name or not self.availability_cache.get(name, False):
+                if name:  # Only add if name is not empty
+                    pkg['reason'] = 'Package not available in current repositories'
+                    unavailable_packages.append(pkg)
+                continue
+        
+        # For available packages, check versions
+        # Group packages by whether they need version checking
+        packages_with_version = []
+        packages_without_version = []
+        
+        for pkg in packages:
+            name = pkg.get('name', '')
+            version = pkg.get('version', '')
+            
+            if not name or not self.availability_cache.get(name, False):
+                continue  # Already handled as unavailable
+                
+            if version:
+                packages_with_version.append(pkg)
+            else:
+                packages_without_version.append(pkg)
+        
+        # Process packages that need version checking
+        if packages_with_version:
+            # Create a list of (name, version) tuples for batch checking
+            version_check_tuples = [(pkg.get('name', ''), pkg.get('version', '')) 
+                                     for pkg in packages_with_version]
+            
+            # Batch check if specific versions are available
+            version_available_results = self.batch_check_versions_available(version_check_tuples)
+            
+            # Get latest versions for packages where specific version isn't available
+            latest_version_packages = [pkg.get('name', '') for pkg in packages_with_version 
+                                       if not version_available_results.get(pkg.get('name', ''), False)]
+            
+            # Batch get latest versions
+            latest_versions = self.batch_get_latest_versions(latest_version_packages)
+            
+            # Process results
+            for pkg in packages_with_version:
+                name = pkg.get('name', '')
+                version = pkg.get('version', '')
+                
+                if version_available_results.get(name, False):
+                    # Exact version is available
+                    available_packages.append(pkg)
+                    commands.append(f"dnf install -y {name}-{version}")
+                else:
+                    # Specific version requested but not available
+                    latest = latest_versions.get(name)
+                    if latest:
+                        # A different version is available
+                        pkg_copy = pkg.copy()
+                        pkg_copy['available_version'] = latest
+                        upgradable_packages.append(pkg_copy)
+                        commands.append(f"dnf install -y {name}  # Requested: {version}, Available: {latest}")
+                    else:
+                        # No version available
+                        pkg['reason'] = f'Requested version {version} not available and no alternative found'
+                        unavailable_packages.append(pkg)
+        
+        # Process packages without specific version
+        if packages_without_version:
+            # Get latest versions for all packages without version
+            latest_versions = self.batch_get_latest_versions([pkg.get('name', '') for pkg in packages_without_version])
+            
+            for pkg in packages_without_version:
+                name = pkg.get('name', '')
+                latest = latest_versions.get(name)
+                
+                if latest:
+                    # Latest version is available
+                    pkg_copy = pkg.copy()
+                    pkg_copy['available_version'] = latest
+                    available_packages.append(pkg_copy)
+                    commands.append(f"dnf install -y {name}  # Will install version {latest}")
+                else:
+                    # Package exists in repo but no installable version found
+                    pkg['reason'] = 'Package exists but no installable version found'
+                    unavailable_packages.append(pkg)
+        
+        return available_packages, unavailable_packages, upgradable_packages, commands
             
     def plan_installation(self, packages: List[Dict[str, Any]]) -> tuple:
         """Plan package installation without executing it
@@ -345,56 +692,105 @@ class DnfPackageManager(PackageManager):
         
         # Calculate total for progress reporting
         total = len(packages)
-        logger.info(f"Planning installation for {total} DNF packages")
+        logger.info(f"Planning installation for {total} DNF packages using parallel processing")
         
-        for i, pkg in enumerate(packages):
-            name = pkg.get('name', '')
-            version = pkg.get('version', '')
+        # Extract all package names for bulk availability check
+        package_names = [pkg.get('name', '') for pkg in packages if pkg.get('name', '')]
+        
+        # Perform bulk availability check to populate cache
+        self.populate_bulk_availability_cache(package_names)
+        
+        # Check how many packages are already in cache
+        cached_count = sum(1 for name in package_names if name in self.availability_cache)
+        logger.info(f"{cached_count}/{len(package_names)} packages found in availability cache")
+        
+        # Split packages into batches for parallel processing
+        batches = []
+        for i in range(0, len(packages), BATCH_SIZE):
+            batches.append(packages[i:i+BATCH_SIZE])
             
-            # Skip if name is missing
-            if not name:
-                continue
+        logger.info(f"Split {len(packages)} packages into {len(batches)} batches for parallel processing")
+        
+        # Use multiple processes to handle batches in parallel
+        try:
+            # Create a process pool
+            with multiprocessing.Pool(processes=NUM_PROCESSES) as pool:
+                # Process batches in parallel
+                results = []
                 
-            # Check if package is available in the repositories
-            if not self.is_package_available(name):
-                pkg['reason'] = 'Package not available in current repositories'
-                unavailable_packages.append(pkg)
-                continue
+                # Print info about parallel processing
+                logger.info(f"Processing packages using {NUM_PROCESSES} parallel processes")
+                print(f"Processing packages in parallel (using {NUM_PROCESSES} processes)...")
                 
-            # Check if specific version is requested and available
-            if version and self.is_version_available(name, version):
-                # Exact version is available
-                available_packages.append(pkg)
-                commands.append(f"dnf install -y {name}-{version}")
-            elif version:
-                # Specific version requested but not available
-                latest = self.get_latest_version(name)
-                if latest:
-                    # A different version is available
-                    pkg_copy = pkg.copy()
-                    pkg_copy['available_version'] = latest
-                    upgradable_packages.append(pkg_copy)
-                    commands.append(f"dnf install -y {name}  # Requested: {version}, Available: {latest}")
-                else:
-                    # No version available
-                    pkg['reason'] = f'Requested version {version} not available and no alternative found'
-                    unavailable_packages.append(pkg)
-            else:
-                # No specific version requested
-                latest = self.get_latest_version(name)
-                if latest:
-                    # Latest version is available
-                    pkg_copy = pkg.copy()
-                    pkg_copy['available_version'] = latest
-                    available_packages.append(pkg_copy)
-                    commands.append(f"dnf install -y {name}  # Will install version {latest}")
-                else:
-                    # Package exists in repo but no installable version found
-                    pkg['reason'] = 'Package exists but no installable version found'
-                    unavailable_packages.append(pkg)
+                # Submit all batches to the pool
+                batch_results = pool.map(self._process_package_batch, batches)
+                
+                # Combine results from all batches
+                for batch_avail, batch_unavail, batch_upgrade, batch_cmds in batch_results:
+                    available_packages.extend(batch_avail)
+                    unavailable_packages.extend(batch_unavail)
+                    upgradable_packages.extend(batch_upgrade)
+                    commands.extend(batch_cmds)
+                    
+                logger.info(f"Parallel processing complete. Results: {len(available_packages)} available, "
+                          f"{len(unavailable_packages)} unavailable, {len(upgradable_packages)} upgradable")
+                
+        except Exception as e:
+            logger.error(f"Error in parallel processing: {e}")
+            logger.info("Falling back to sequential processing")
             
-            # Report progress periodically
-            if (i+1) % 10 == 0 or (i+1) == total:
-                logger.info(f"Planning progress: {i+1}/{total} packages processed")
+            # Fall back to sequential processing if parallel fails
+            for i, pkg in enumerate(packages):
+                name = pkg.get('name', '')
+                version = pkg.get('version', '')
+                
+                # Skip if name is missing
+                if not name:
+                    continue
+                    
+                # Check if package is available in the repositories (using cache)
+                if not self.is_package_available(name):
+                    pkg['reason'] = 'Package not available in current repositories'
+                    unavailable_packages.append(pkg)
+                    continue
+                    
+                # Check if specific version is requested and available
+                if version and self.is_version_available(name, version):
+                    # Exact version is available
+                    available_packages.append(pkg)
+                    commands.append(f"dnf install -y {name}-{version}")
+                elif version:
+                    # Specific version requested but not available
+                    latest = self.get_latest_version(name)
+                    if latest:
+                        # A different version is available
+                        pkg_copy = pkg.copy()
+                        pkg_copy['available_version'] = latest
+                        upgradable_packages.append(pkg_copy)
+                        commands.append(f"dnf install -y {name}  # Requested: {version}, Available: {latest}")
+                    else:
+                        # No version available
+                        pkg['reason'] = f'Requested version {version} not available and no alternative found'
+                        unavailable_packages.append(pkg)
+                else:
+                    # No specific version requested
+                    latest = self.get_latest_version(name)
+                    if latest:
+                        # Latest version is available
+                        pkg_copy = pkg.copy()
+                        pkg_copy['available_version'] = latest
+                        available_packages.append(pkg_copy)
+                        commands.append(f"dnf install -y {name}  # Will install version {latest}")
+                    else:
+                        # Package exists in repo but no installable version found
+                        pkg['reason'] = 'Package exists but no installable version found'
+                        unavailable_packages.append(pkg)
+                
+                # Report progress periodically
+                if (i+1) % 10 == 0 or (i+1) == total:
+                    logger.info(f"Planning progress: {i+1}/{total} packages processed")
+        
+        # Save the cache when done
+        self._save_availability_cache()
                 
         return available_packages, unavailable_packages, upgradable_packages, commands 
