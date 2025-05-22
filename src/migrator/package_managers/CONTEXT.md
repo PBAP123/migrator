@@ -3,6 +3,17 @@
 ## Overview
 The `package_managers` directory contains modules that interact with various Linux package management systems. These modules handle detecting installed packages, backing them up, and restoring them on new systems, even across different distributions.
 
+## Supported Package Managers
+
+Migrator supports multiple package managers:
+
+- `apt` - For Debian/Ubuntu-based distributions
+- `dnf` - For Fedora/RHEL-based distributions
+- `pacman` - For Arch Linux-based distributions
+- `snap` - For Canonical's Snap packages (cross-distribution)
+- `flatpak` - For Flatpak packages (cross-distribution)
+- `appimage` - For AppImage applications (cross-distribution)
+
 ## Key Files
 
 ### `__init__.py`
@@ -26,6 +37,7 @@ Implements cross-distribution package equivalence detection:
 - Pattern matching for common package naming conventions
 - Custom user mappings through a JSON configuration file
 - Intelligent search for similar packages when exact matches aren't available
+- Name normalization to account for different naming conventions
 
 ### `apt.py`
 Handles Debian/Ubuntu APT package management:
@@ -70,6 +82,47 @@ Handles AppImage applications:
 - Integration file management
 - Desktop entry handling
 - AppImage portability support
+
+## Cross-Distribution Package Equivalence Detection
+
+A key feature of Migrator is its ability to detect equivalent packages across different package managers. For example, if you backup a system with `apt` packages (Ubuntu) and restore on a system with `dnf` packages (Fedora), Migrator can find the equivalent packages.
+
+### How it Works
+
+The package mapping system uses several strategies to find equivalent packages:
+
+1. **Built-in mappings**: Common packages are mapped directly (e.g., `libreoffice` in apt → `libreoffice` in dnf)
+2. **Pattern matching**: Common package naming patterns are recognized (e.g., `python3-dev` in apt → `python3-devel` in dnf)
+3. **Name normalization**: Package names are normalized to account for different naming conventions
+4. **Similar package search**: When direct mappings fail, Migrator searches for similar package names
+
+### Customizing Package Mappings
+
+Users can customize the package equivalence mappings by editing the JSON file at:
+
+```
+~/.config/migrator/package_mappings.json
+```
+
+The file structure is:
+
+```json
+{
+  "_comment": "Add your custom package mappings here",
+  "package_name": {
+    "apt": "apt_package_name",
+    "dnf": "dnf_package_name",
+    "pacman": "pacman_package_name"
+  },
+  "another_package": {
+    "apt": "apt_name",
+    "dnf": "dnf_name",
+    "pacman": "pacman_name"
+  }
+}
+```
+
+Users can edit this file directly, or use the command: `migrator edit-mappings`
 
 ## Design Patterns
 - Factory pattern for creating appropriate package manager instances
