@@ -244,6 +244,458 @@ class PackageMapper:
                 'dnf': 'gparted',
                 'pacman': 'gparted',
             },
+            
+            # Extended Ubuntu to Fedora mappings
+            '7zip': {
+                'apt': '7zip',
+                'dnf': 'p7zip',
+                'pacman': 'p7zip',
+            },
+            'p7zip': {
+                'apt': 'p7zip',
+                'dnf': 'p7zip',
+                'pacman': 'p7zip',
+            },
+            'p7zip-full': {
+                'apt': 'p7zip-full',
+                'dnf': 'p7zip',
+                'pacman': 'p7zip',
+            },
+            'audacity': {
+                'apt': 'audacity',
+                'dnf': 'audacity',
+                'pacman': 'audacity',
+            },
+            'autoconf': {
+                'apt': 'autoconf',
+                'dnf': 'autoconf',
+                'pacman': 'autoconf',
+            },
+            'automake': {
+                'apt': 'automake',
+                'dnf': 'automake',
+                'pacman': 'automake',
+            },
+            'baobab': {
+                'apt': 'baobab',
+                'dnf': 'baobab',
+                'pacman': 'baobab',
+            },
+            'bison': {
+                'apt': 'bison',
+                'dnf': 'bison',
+                'pacman': 'bison',
+            },
+            'blender': {
+                'apt': 'blender',
+                'dnf': 'blender',
+                'pacman': 'blender',
+            },
+            'bzip2': {
+                'apt': 'bzip2',
+                'dnf': 'bzip2',
+                'pacman': 'bzip2',
+            },
+            'clamav': {
+                'apt': 'clamav',
+                'dnf': 'clamav',
+                'pacman': 'clamav',
+            },
+            'clang': {
+                'apt': 'clang',
+                'dnf': 'clang',
+                'pacman': 'clang',
+            },
+            'clementine': {
+                'apt': 'clementine',
+                'dnf': 'clementine',
+                'pacman': 'clementine',
+            },
+            'code': {
+                'apt': 'code',
+                'dnf': 'code',
+                'pacman': 'code',
+            },
+            'dbus': {
+                'apt': 'dbus',
+                'dnf': 'dbus',
+                'pacman': 'dbus',
+            },
+            'dconf-editor': {
+                'apt': 'dconf-editor',
+                'dnf': 'dconf-editor',
+                'pacman': 'dconf-editor',
+            },
+            'deluge': {
+                'apt': 'deluge',
+                'dnf': 'deluge',
+                'pacman': 'deluge',
+            },
+            'evince': {
+                'apt': 'evince',
+                'dnf': 'evince',
+                'pacman': 'evince',
+            },
+            'exfat-utils': {
+                'apt': 'exfat-utils',
+                'dnf': 'exfatprogs',
+                'pacman': 'exfatprogs',
+            },
+            'exfat-fuse': {
+                'apt': 'exfat-fuse',
+                'dnf': 'fuse-exfat',
+                'pacman': 'fuse-exfat',
+            },
+            'fdupes': {
+                'apt': 'fdupes',
+                'dnf': 'fdupes',
+                'pacman': 'fdupes',
+            },
+            'flex': {
+                'apt': 'flex',
+                'dnf': 'flex',
+                'pacman': 'flex',
+            },
+            'fonts-liberation': {
+                'apt': 'fonts-liberation',
+                'dnf': 'liberation-fonts',
+                'pacman': 'ttf-liberation',
+            },
+            'gimp': {
+                'apt': 'gimp',
+                'dnf': 'gimp',
+                'pacman': 'gimp',
+            },
+            'gitk': {
+                'apt': 'gitk',
+                'dnf': 'git-gui',
+                'pacman': 'git-gui',
+            },
+            'gnome-calculator': {
+                'apt': 'gnome-calculator',
+                'dnf': 'gnome-calculator',
+                'pacman': 'gnome-calculator',
+            },
+            'gnome-disk-utility': {
+                'apt': 'gnome-disk-utility',
+                'dnf': 'gnome-disk-utility',
+                'pacman': 'gnome-disk-utility',
+            },
+            'gnome-system-monitor': {
+                'apt': 'gnome-system-monitor',
+                'dnf': 'gnome-system-monitor',
+                'pacman': 'gnome-system-monitor',
+            },
+            'gpg': {
+                'apt': 'gpg',
+                'dnf': 'gnupg2',
+                'pacman': 'gnupg',
+            },
+            'gstreamer1.0-alsa': {
+                'apt': 'gstreamer1.0-alsa',
+                'dnf': 'gstreamer1-plugins-base',
+                'pacman': 'gst-plugins-base',
+            },
+            'gstreamer1.0-plugins-base': {
+                'apt': 'gstreamer1.0-plugins-base',
+                'dnf': 'gstreamer1-plugins-base',
+                'pacman': 'gst-plugins-base',
+            },
+            'gstreamer1.0-plugins-good': {
+                'apt': 'gstreamer1.0-plugins-good',
+                'dnf': 'gstreamer1-plugins-good',
+                'pacman': 'gst-plugins-good',
+            },
+            'gstreamer1.0-plugins-bad': {
+                'apt': 'gstreamer1.0-plugins-bad',
+                'dnf': 'gstreamer1-plugins-bad-free',
+                'pacman': 'gst-plugins-bad',
+            },
+            'gstreamer1.0-plugins-ugly': {
+                'apt': 'gstreamer1.0-plugins-ugly',
+                'dnf': 'gstreamer1-plugins-ugly',
+                'pacman': 'gst-plugins-ugly',
+            },
+            'gvfs-backends': {
+                'apt': 'gvfs-backends',
+                'dnf': 'gvfs',
+                'pacman': 'gvfs',
+            },
+            'inkscape': {
+                'apt': 'inkscape',
+                'dnf': 'inkscape',
+                'pacman': 'inkscape',
+            },
+            'iotop': {
+                'apt': 'iotop',
+                'dnf': 'iotop',
+                'pacman': 'iotop',
+            },
+            'iperf': {
+                'apt': 'iperf',
+                'dnf': 'iperf',
+                'pacman': 'iperf',
+            },
+            'keepassxc': {
+                'apt': 'keepassxc',
+                'dnf': 'keepassxc',
+                'pacman': 'keepassxc',
+            },
+            'krita': {
+                'apt': 'krita',
+                'dnf': 'krita',
+                'pacman': 'krita',
+            },
+            'libavcodec-dev': {
+                'apt': 'libavcodec-dev',
+                'dnf': 'ffmpeg-devel',
+                'pacman': 'ffmpeg',
+            },
+            'libcurl4-openssl-dev': {
+                'apt': 'libcurl4-openssl-dev',
+                'dnf': 'libcurl-devel',
+                'pacman': 'curl',
+            },
+            'libgtk-3-dev': {
+                'apt': 'libgtk-3-dev',
+                'dnf': 'gtk3-devel',
+                'pacman': 'gtk3',
+            },
+            'libjpeg-dev': {
+                'apt': 'libjpeg-dev',
+                'dnf': 'libjpeg-turbo-devel',
+                'pacman': 'libjpeg-turbo',
+            },
+            'libncurses5-dev': {
+                'apt': 'libncurses5-dev',
+                'dnf': 'ncurses-devel',
+                'pacman': 'ncurses',
+            },
+            'libpng-dev': {
+                'apt': 'libpng-dev',
+                'dnf': 'libpng-devel',
+                'pacman': 'libpng',
+            },
+            'libsqlite3-dev': {
+                'apt': 'libsqlite3-dev',
+                'dnf': 'sqlite-devel',
+                'pacman': 'sqlite',
+            },
+            'libtool': {
+                'apt': 'libtool',
+                'dnf': 'libtool',
+                'pacman': 'libtool',
+            },
+            'libxml2-dev': {
+                'apt': 'libxml2-dev',
+                'dnf': 'libxml2-devel',
+                'pacman': 'libxml2',
+            },
+            'lightdm': {
+                'apt': 'lightdm',
+                'dnf': 'lightdm',
+                'pacman': 'lightdm',
+            },
+            'mlocate': {
+                'apt': 'mlocate',
+                'dnf': 'mlocate',
+                'pacman': 'mlocate',
+            },
+            'mpv': {
+                'apt': 'mpv',
+                'dnf': 'mpv',
+                'pacman': 'mpv',
+            },
+            'neofetch': {
+                'apt': 'neofetch',
+                'dnf': 'neofetch',
+                'pacman': 'neofetch',
+            },
+            'neovim': {
+                'apt': 'neovim',
+                'dnf': 'neovim',
+                'pacman': 'neovim',
+            },
+            'net-tools': {
+                'apt': 'net-tools',
+                'dnf': 'net-tools',
+                'pacman': 'net-tools',
+            },
+            'network-manager': {
+                'apt': 'network-manager',
+                'dnf': 'NetworkManager',
+                'pacman': 'networkmanager',
+            },
+            'network-manager-gnome': {
+                'apt': 'network-manager-gnome',
+                'dnf': 'network-manager-applet',
+                'pacman': 'network-manager-applet',
+            },
+            'nmap': {
+                'apt': 'nmap',
+                'dnf': 'nmap',
+                'pacman': 'nmap',
+            },
+            'npm': {
+                'apt': 'npm',
+                'dnf': 'npm',
+                'pacman': 'npm',
+            },
+            'ntfs-3g': {
+                'apt': 'ntfs-3g',
+                'dnf': 'ntfs-3g',
+                'pacman': 'ntfs-3g',
+            },
+            'okular': {
+                'apt': 'okular',
+                'dnf': 'okular',
+                'pacman': 'okular',
+            },
+            'openssh-server': {
+                'apt': 'openssh-server',
+                'dnf': 'openssh-server',
+                'pacman': 'openssh',
+            },
+            'pavucontrol': {
+                'apt': 'pavucontrol',
+                'dnf': 'pavucontrol',
+                'pacman': 'pavucontrol',
+            },
+            'pulseaudio': {
+                'apt': 'pulseaudio',
+                'dnf': 'pulseaudio',
+                'pacman': 'pulseaudio',
+            },
+            'pv': {
+                'apt': 'pv',
+                'dnf': 'pv',
+                'pacman': 'pv',
+            },
+            'rar': {
+                'apt': 'rar',
+                'dnf': 'unrar',
+                'pacman': 'unrar',
+            },
+            'rhythmbox': {
+                'apt': 'rhythmbox',
+                'dnf': 'rhythmbox',
+                'pacman': 'rhythmbox',
+            },
+            'rsync': {
+                'apt': 'rsync',
+                'dnf': 'rsync',
+                'pacman': 'rsync',
+            },
+            'rygel': {
+                'apt': 'rygel',
+                'dnf': 'rygel',
+                'pacman': 'rygel',
+            },
+            'scribus': {
+                'apt': 'scribus',
+                'dnf': 'scribus',
+                'pacman': 'scribus',
+            },
+            'sddm': {
+                'apt': 'sddm',
+                'dnf': 'sddm',
+                'pacman': 'sddm',
+            },
+            'shotwell': {
+                'apt': 'shotwell',
+                'dnf': 'shotwell',
+                'pacman': 'shotwell',
+            },
+            'sqlite3': {
+                'apt': 'sqlite3',
+                'dnf': 'sqlite',
+                'pacman': 'sqlite',
+            },
+            'steam': {
+                'apt': 'steam',
+                'dnf': 'steam',
+                'pacman': 'steam',
+            },
+            'texlive': {
+                'apt': 'texlive',
+                'dnf': 'texlive',
+                'pacman': 'texlive-core',
+            },
+            'thunar': {
+                'apt': 'thunar',
+                'dnf': 'thunar',
+                'pacman': 'thunar',
+            },
+            'tmux': {
+                'apt': 'tmux',
+                'dnf': 'tmux',
+                'pacman': 'tmux',
+            },
+            'transmission-gtk': {
+                'apt': 'transmission-gtk',
+                'dnf': 'transmission-gtk',
+                'pacman': 'transmission-gtk',
+            },
+            'unrar': {
+                'apt': 'unrar',
+                'dnf': 'unrar',
+                'pacman': 'unrar',
+            },
+            'unzip': {
+                'apt': 'unzip',
+                'dnf': 'unzip',
+                'pacman': 'unzip',
+            },
+            'upower': {
+                'apt': 'upower',
+                'dnf': 'upower',
+                'pacman': 'upower',
+            },
+            'usbutils': {
+                'apt': 'usbutils',
+                'dnf': 'usbutils',
+                'pacman': 'usbutils',
+            },
+            'valgrind': {
+                'apt': 'valgrind',
+                'dnf': 'valgrind',
+                'pacman': 'valgrind',
+            },
+            'virt-manager': {
+                'apt': 'virt-manager',
+                'dnf': 'virt-manager',
+                'pacman': 'virt-manager',
+            },
+            'vscode': {
+                'apt': 'code',
+                'dnf': 'code',
+                'pacman': 'code',
+            },
+            'wine': {
+                'apt': 'wine',
+                'dnf': 'wine',
+                'pacman': 'wine',
+            },
+            'xfce4-terminal': {
+                'apt': 'xfce4-terminal',
+                'dnf': 'xfce4-terminal',
+                'pacman': 'xfce4-terminal',
+            },
+            'xz-utils': {
+                'apt': 'xz-utils',
+                'dnf': 'xz',
+                'pacman': 'xz',
+            },
+            'zlib1g-dev': {
+                'apt': 'zlib1g-dev',
+                'dnf': 'zlib-devel',
+                'pacman': 'zlib',
+            },
+            'zstd': {
+                'apt': 'zstd',
+                'dnf': 'zstd',
+                'pacman': 'zstd',
+            },
         }
         
         # Try to load user custom mappings and merge them
@@ -300,6 +752,7 @@ class PackageMapper:
         # Enable more detailed debugging for diagnostic purposes
         debug_count = 0
         mapped_count = 0
+        available_count = 0
         mapping_reasons = {
             "direct": 0,
             "custom": 0,
@@ -313,6 +766,7 @@ class PackageMapper:
             # Default to no equivalent name found
             equivalent_name = None
             mapping_reason = "failed"
+            is_available = False
             
             try:
                 # Extract package name based on package type
@@ -367,25 +821,65 @@ class PackageMapper:
                 # Check if the equivalent package is available if a check function was provided
                 if equivalent_name and available_check_fn:
                     try:
-                        if not available_check_fn(equivalent_name):
-                            # Try to find a similar package
-                            try:
-                                similar_name = self.find_package_with_similar_name(
-                                    equivalent_name, target_type, available_check_fn
-                                )
-                                if similar_name:
-                                    equivalent_name = similar_name
-                                    mapping_reason = "similar_search"
-                                else:
-                                    # If no similar package found with the equivalent name, try with the original
+                        # First check: Is the mapped name directly available?
+                        is_available = available_check_fn(equivalent_name)
+                        
+                        if is_available:
+                            available_count += 1
+                        else:
+                            # Log for debugging availability issues
+                            if debug_count < 20:
+                                logger.info(f"Package {pkg_name} -> {equivalent_name} (mapping: {mapping_reason}, available: {is_available})")
+                                
+                            # Try standard package name variations for common packages
+                            if target_type == 'dnf':
+                                alternative_names = []
+                                # Common Fedora package name variations
+                                if equivalent_name.startswith('lib') and not equivalent_name.endswith('-devel'):
+                                    alternative_names.append(f"{equivalent_name}-devel")
+                                if not equivalent_name.startswith('lib'):
+                                    alternative_names.append(f"lib{equivalent_name}")
+                                # Check 7zip -> p7zip specifically
+                                if equivalent_name == '7zip':
+                                    alternative_names.append('p7zip')
+                                # Try python3- prefix
+                                if not equivalent_name.startswith('python'):
+                                    alternative_names.append(f"python3-{equivalent_name}")
+                                
+                                # Check each alternative
+                                for alt_name in alternative_names:
+                                    if available_check_fn(alt_name):
+                                        equivalent_name = alt_name
+                                        is_available = True
+                                        available_count += 1
+                                        logger.info(f"Found alternative: {pkg_name} -> {alt_name}")
+                                        break
+                                
+                            # If still not available, try to find a similar package
+                            if not is_available:
+                                try:
                                     similar_name = self.find_package_with_similar_name(
-                                        pkg_name, target_type, available_check_fn
+                                        equivalent_name, target_type, available_check_fn
                                     )
                                     if similar_name:
                                         equivalent_name = similar_name
-                                        mapping_reason = "original_search"
-                            except Exception as e:
-                                logger.error(f"Error finding similar package for {equivalent_name}: {e}")
+                                        is_available = True
+                                        available_count += 1
+                                        mapping_reason = "similar_search"
+                                        logger.info(f"Found similar: {pkg_name} -> {similar_name}")
+                                    else:
+                                        # If no similar package found with the equivalent name, try with the original
+                                        similar_name = self.find_package_with_similar_name(
+                                            pkg_name, target_type, available_check_fn
+                                        )
+                                        if similar_name:
+                                            equivalent_name = similar_name
+                                            is_available = True
+                                            available_count += 1
+                                            mapping_reason = "original_search"
+                                            logger.info(f"Found from original: {pkg_name} -> {similar_name}")
+                                except Exception as e:
+                                    logger.error(f"Error finding similar package for {equivalent_name}: {e}")
                     except Exception as e:
                         logger.error(f"Error checking availability for {equivalent_name}: {e}")
                 
@@ -393,8 +887,11 @@ class PackageMapper:
                 logger.error(f"Error mapping package {str(pkg)[:30]}: {e}")
                 equivalent_name = None
             
-            # Add the package and its equivalent name to results
-            results.append((pkg, equivalent_name))
+            # Only append available equivalents to results
+            if is_available:
+                results.append((pkg, equivalent_name))
+            else:
+                results.append((pkg, None))
             
             # Update progress
             current_time = time.time()
@@ -414,7 +911,7 @@ class PackageMapper:
             print()  # Add newline after progress reporting
             
         # Log summary of mapping statistics
-        logger.info(f"Package mapping complete: {mapped_count}/{total_packages} packages mapped")
+        logger.info(f"Package mapping complete: {mapped_count}/{total_packages} packages mapped ({available_count} available)")
         logger.info(f"Mapping methods: Direct={mapping_reasons['direct']}, Custom={mapping_reasons['custom']}, " +
                    f"Pattern={mapping_reasons['pattern']}, Normalized={mapping_reasons['normalized']}, " +
                    f"Failed={mapping_reasons['failed']}")
