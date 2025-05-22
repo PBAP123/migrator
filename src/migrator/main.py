@@ -528,6 +528,56 @@ class Migrator:
         
         logger.info("System state updated successfully")
     
+    def is_system_package(self, pkg_name: str) -> bool:
+        """Check if a package is a system package that should not be backed up or restored
+        
+        These include drivers, kernels, firmware, and other system-specific packages
+        that shouldn't be transferred between systems.
+        
+        Args:
+            pkg_name: Name of the package to check
+            
+        Returns:
+            True if the package is a system package, False otherwise
+        """
+        # Convert to lowercase for case-insensitive matching
+        pkg_lower = pkg_name.lower()
+        
+        # Check for kernel packages
+        if (pkg_lower.startswith("kernel") or 
+            pkg_lower.startswith("linux-image") or 
+            pkg_lower.startswith("linux-headers")):
+            return True
+            
+        # Check for driver packages
+        if (pkg_lower.endswith("-driver") or
+            pkg_lower.endswith("-drivers") or
+            "driver" in pkg_lower and any(x in pkg_lower for x in ["nvidia", "amd", "radeon", "intel", "graphics"]) or
+            pkg_lower.startswith("xorg-x11-drv-") or
+            pkg_lower.startswith("xserver-xorg-video-")):
+            return True
+            
+        # Check for firmware packages
+        if (pkg_lower.endswith("-firmware") or
+            pkg_lower.startswith("firmware-") or
+            pkg_lower.startswith("linux-firmware") or
+            "firmware" in pkg_lower):
+            return True
+            
+        # Check for specific hardware-related packages
+        specific_hw_pkgs = [
+            "nvidia", "nouveau", "cuda", "amdgpu", "radeon", 
+            "intel-media-driver", "mesa-dri-drivers", 
+            "akmod", "kmod", "dkms", "broadcom", "realtek",
+            "iwlwifi", "system76-driver", "fwupd"
+        ]
+        
+        for hw_pkg in specific_hw_pkgs:
+            if hw_pkg in pkg_lower:
+                return True
+                
+        return False
+
     def backup_state(self, backup_dir: Optional[str] = None) -> Optional[str]:
         """Backup the current system state to a file
         
@@ -546,56 +596,38 @@ class Migrator:
         # Generate a timestamp for the backup filename
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Check if any config files might have portability issues
-        config_paths = [cfg.path for cfg in self.config_files]
+        # Get the hostname
+        hostname = self.system_variables.hostname
         
-        # Get warnings from each config tracker
-        portability_warnings = {}
-        
-        # Check user config tracker for warnings
-        if hasattr(self.user_config_tracker, 'get_path_warnings'):
-            user_warnings = self.user_config_tracker.get_path_warnings(config_paths)
-            if user_warnings:
-                portability_warnings.update(user_warnings)
-        
-        # Display warnings to the user if any found
-        if portability_warnings:
-            print("\nPORTABILITY WARNINGS:")
-            print("----------------------")
-            print("The following paths in your backup may have portability issues:")
-            for path, warning in portability_warnings.items():
-                print(f"\n- {path}:")
-                print(f"  {warning}")
-            
-            print("\nDo you want to continue with the backup?")
-            choice = input("Continue? (y/n) [y]: ").strip().lower()
-            
-            if choice and choice not in ['y', 'yes']:
-                print("Backup cancelled.")
-                return None
-        
-        # Get hostname for organizing backups
-        hostname = platform.node() or "unknown"
-        
-        # Create host-specific directory
+        # Sanitize hostname for filename (remove invalid characters)
         safe_hostname = ''.join(c if c.isalnum() or c in '-_' else '_' for c in hostname)
+        
+        # Create a host-specific directory
         host_backup_dir = os.path.join(backup_dir, safe_hostname)
         os.makedirs(host_backup_dir, exist_ok=True)
         
-        # Create backup file in the host-specific directory
-        backup_file = os.path.join(host_backup_dir, f"migrator_backup_{timestamp}_{hostname}.json")
+        # Backup filename format: migrator_backup_YYYYMMDD_HHMMSS.json
+        backup_file = os.path.join(host_backup_dir, f"migrator_backup_{timestamp}_{safe_hostname}.json")
         
-        # Create a config_files directory for storing actual configuration files
-        configs_dir = os.path.join(os.path.dirname(backup_file), "config_files")
+        # Directory for config file backups
+        configs_dir = os.path.join(host_backup_dir, "config_files", timestamp)
         os.makedirs(configs_dir, exist_ok=True)
         
-        # Filter packages to include only manually installed ones
-        manually_installed_packages = [pkg for pkg in self.installed_packages if getattr(pkg, 'manually_installed', False)]
+        # Filter packages to include only manually installed ones and exclude system packages
+        manually_installed_packages = [
+            pkg for pkg in self.installed_packages 
+            if getattr(pkg, 'manually_installed', False) and not self.is_system_package(pkg.name)
+        ]
         
         manual_count = len(manually_installed_packages)
+        excluded_system_pkgs = len([pkg for pkg in self.installed_packages 
+                                  if getattr(pkg, 'manually_installed', False) and self.is_system_package(pkg.name)])
         total_count = len(self.installed_packages)
+        
         logger.info(f"Backing up {manual_count} manually installed packages out of {total_count} total packages")
-        print(f"Backing up {manual_count} manually installed packages (excluding dependencies)")
+        logger.info(f"Excluded {excluded_system_pkgs} system packages (drivers, kernels, firmware, etc.)")
+        print(f"Backing up {manual_count} manually installed packages (excluding dependencies and system packages)")
+        print(f"Excluded {excluded_system_pkgs} system packages (drivers, kernels, firmware)")
 
         # Create a backup data structure
         backup_data = {
@@ -1213,6 +1245,15 @@ class Migrator:
                     "upgradable": [],
                     "installation_commands": []
                 }
+            
+            # Filter out system packages that shouldn't be restored
+            original_count = len(packages)
+            packages = [pkg for pkg in packages if not self.is_system_package(pkg.get("name", ""))]
+            excluded_count = original_count - len(packages)
+            
+            if excluded_count > 0:
+                logger.info(f"Excluded {excluded_count} system packages (drivers, kernels, firmware, etc.)")
+                print(f"Excluding {excluded_count} system packages (drivers, kernels, firmware)")
                 
             logger.info(f"Found {len(packages)} packages in backup")
             print(f"Planning installation of {len(packages)} packages with dependencies...")
@@ -1973,6 +2014,15 @@ class Migrator:
                 
             # Get packages from backup (only user-installed packages are included)
             packages = backup_data.get("packages", [])
+            
+            # Filter out system packages that shouldn't be restored
+            original_count = len(packages)
+            packages = [pkg for pkg in packages if not self.is_system_package(pkg.get("name", ""))]
+            excluded_count = original_count - len(packages)
+            
+            if excluded_count > 0:
+                logger.info(f"Excluded {excluded_count} system packages (drivers, kernels, firmware, etc.)")
+                print(f"Excluding {excluded_count} system packages (drivers, kernels, firmware)")
                         
             if not packages:
                 logger.warning("No packages found in backup")
@@ -2355,6 +2405,15 @@ class Migrator:
                 
             # Get packages from backup (only user-installed packages are included in the backup)
             packages = backup_data.get("packages", [])
+            
+            # Filter out system packages that shouldn't be restored
+            original_count = len(packages)
+            packages = [pkg for pkg in packages if not self.is_system_package(pkg.get("name", ""))]
+            excluded_count = original_count - len(packages)
+            
+            if excluded_count > 0:
+                logger.info(f"Excluded {excluded_count} system packages from dry run report (drivers, kernels, firmware, etc.)")
+                report["packages"]["excluded_system_packages"] = excluded_count
                         
             report["packages"]["total"] = len(packages)
             
