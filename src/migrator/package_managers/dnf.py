@@ -24,27 +24,54 @@ class DnfPackageManager(PackageManager):
         
         # Check if we have sudo privileges
         self.has_sudo = self._check_sudo()
+        
+        # Handle timestamp ranges - platform specific maximum
+        self.max_timestamp = 2147483647  # Default max for 32-bit systems
+        # Check if we're on a 64-bit system and adjust accordingly
+        import sys
+        if sys.maxsize > 2**32:
+            self.max_timestamp = 2524608000  # Max for 64-bit (~2050)
     
     def _check_sudo(self) -> bool:
         """Check if we have sudo privileges"""
         try:
             # Use dnf instead of sudo to avoid asking for password
-            subprocess.run(['dnf', '--version'], 
-                           stdout=subprocess.PIPE, 
-                           stderr=subprocess.PIPE, 
-                           check=True)
-            return True
+            result = subprocess.run(['dnf', '--version'], 
+                       stdout=subprocess.PIPE, 
+                       stderr=subprocess.PIPE, 
+                       check=False)
+            return result.returncode == 0
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
+    
+    def _safe_run_rpm_command(self, cmd, check=True):
+        """Safely run RPM commands, handling timestamp-related errors"""
+        try:
+            return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=check)
+        except subprocess.SubprocessError as e:
+            # Check if it's a timestamp error
+            error_str = str(e)
+            if "timestamp out of range" in error_str or "time_t" in error_str:
+                logger.warning(f"Timestamp error in RPM command: {error_str}")
+                # Return a "dummy" result object that won't fail further processing
+                class DummyResult:
+                    def __init__(self):
+                        self.returncode = 1 if check else 0
+                        self.stdout = ""
+                        self.stderr = error_str
+                return DummyResult()
+            # Re-raise other errors
+            raise
     
     def list_installed_packages(self) -> List[Package]:
         """List all packages installed via DNF/RPM"""
         packages = []
+        invalid_timestamp_count = 0
         
         try:
             # Get list of installed packages with their versions
             cmd = [self.rpm_path, '-qa', '--queryformat', '%{NAME} %{VERSION}-%{RELEASE} %{SUMMARY}\\n']
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            result = self._safe_run_rpm_command(cmd)
             
             # Parse rpm output
             for line in result.stdout.splitlines():
@@ -54,20 +81,41 @@ class DnfPackageManager(PackageManager):
                     version = parts[1]
                     description = parts[2] if len(parts) > 2 else ""
                     
-                    # Check if it was manually installed
-                    manually_installed = self.is_user_installed(name)
-                    
-                    # Get install date
-                    install_date = self._get_install_date(name)
-                    
-                    packages.append(Package(
-                        name=name,
-                        version=version,
-                        description=description,
-                        source='dnf',
-                        install_date=install_date,
-                        manually_installed=manually_installed
-                    ))
+                    try:
+                        # Check if it was manually installed
+                        manually_installed = self.is_user_installed(name)
+                        
+                        # Get install date
+                        install_date = self._get_install_date(name)
+                        if install_date is None and name.startswith('kernel'):
+                            # Only increment for kernel packages to avoid too much noise
+                            invalid_timestamp_count += 1
+                        
+                        packages.append(Package(
+                            name=name,
+                            version=version,
+                            description=description,
+                            source='dnf',
+                            install_date=install_date,
+                            manually_installed=manually_installed
+                        ))
+                    except Exception as pkg_error:
+                        # Log the error but continue processing other packages
+                        logger.warning(f"Error processing package {name}: {pkg_error}")
+                        # Still add the package with limited information
+                        packages.append(Package(
+                            name=name,
+                            version=version,
+                            description=description,
+                            source='dnf',
+                            install_date=None,
+                            manually_installed=False
+                        ))
+            
+            # Log summary of timestamp issues
+            if invalid_timestamp_count > 0:
+                logger.info(f"Found {invalid_timestamp_count} packages with invalid installation timestamps (mostly kernel packages)")
+                print(f"Note: {invalid_timestamp_count} packages had invalid timestamps - using fallback data")
             
             return packages
         
@@ -78,13 +126,44 @@ class DnfPackageManager(PackageManager):
     def _get_install_date(self, package_name: str) -> Optional[datetime]:
         """Get the installation date of a package"""
         try:
-            cmd = [self.rpm_path, '-q', '--queryformat', '%{INSTALLTIME}', package_name]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            # Try to get install date using buildtime as fallback if installtime is invalid
+            # (buildtime is typically more reliable)
+            cmd = [self.rpm_path, '-q', '--queryformat', '%{INSTALLTIME}|%{BUILDTIME}', package_name]
+            result = self._safe_run_rpm_command(cmd)
             
-            # Parse timestamp
-            timestamp = result.stdout.strip()
+            # Parse timestamp - now potentially has both install and build time
+            data = result.stdout.strip()
+            
+            if not data:
+                return None
+                
+            # Try install time first, then build time as fallback
+            timestamps = data.split('|')
+            timestamp = timestamps[0]
+            
+            # If install time looks invalid but we have build time, use that instead
+            if (not timestamp or not timestamp.isdigit() or len(timestamp) > 12) and len(timestamps) > 1 and timestamps[1].isdigit():
+                timestamp = timestamps[1]
+                logger.debug(f"Using build time instead of install time for package {package_name}")
+            
             if timestamp and timestamp.isdigit():
-                return datetime.fromtimestamp(int(timestamp))
+                try:
+                    # Handle timestamp out of range errors
+                    timestamp_int = int(timestamp)
+                    
+                    # More thorough validation of timestamp
+                    # Normal Unix timestamps are ~10 digits for recent dates
+                    # Anything over 12 digits is definitely invalid
+                    # Max realistic value: Jan 1, 2100 = 4102444800
+                    if timestamp_int < 0 or timestamp_int > 4102444800 or len(timestamp) > 12:
+                        logger.debug(f"Invalid timestamp for package {package_name}: {timestamp} (outside reasonable date range)")
+                        return None
+                    
+                    return datetime.fromtimestamp(timestamp_int)
+                except (ValueError, OverflowError, OSError) as e:
+                    # This handles the "timestamp out of range for platform time_t" error
+                    logger.debug(f"Error parsing timestamp for package {package_name}: {e}")
+                    return None
             
             return None
         except subprocess.SubprocessError:
@@ -95,7 +174,7 @@ class DnfPackageManager(PackageManager):
         try:
             # In DNF, packages explicitly installed usually appear in the "install" transaction
             cmd = ['dnf', 'history', 'userinstalled']
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            result = self._safe_run_rpm_command(cmd, check=False)
             
             if result.returncode != 0:
                 return False
@@ -108,7 +187,7 @@ class DnfPackageManager(PackageManager):
         """Check if a package is available in the DNF repositories"""
         try:
             cmd = [self.dnf_path, 'info', package_name]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            result = self._safe_run_rpm_command(cmd, check=False)
             return result.returncode == 0 and "Available Packages" in result.stdout
         except subprocess.SubprocessError:
             return False
@@ -123,7 +202,7 @@ class DnfPackageManager(PackageManager):
             
             # Get package details
             cmd = [self.rpm_path, '-qi', package_name]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            result = self._safe_run_rpm_command(cmd)
             
             # Parse rpm -qi output
             package_info = {}
@@ -158,7 +237,7 @@ class DnfPackageManager(PackageManager):
         """Get the installed version of a package"""
         try:
             cmd = [self.rpm_path, '-q', '--queryformat', '%{VERSION}-%{RELEASE}', package_name]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            result = self._safe_run_rpm_command(cmd)
             
             if result.returncode != 0 or not result.stdout.strip():
                 return None
@@ -173,7 +252,7 @@ class DnfPackageManager(PackageManager):
         try:
             # Use DNF info to get the available version
             cmd = [self.dnf_path, 'info', package_name]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            result = self._safe_run_rpm_command(cmd, check=False)
             
             if result.returncode != 0:
                 return None
@@ -196,7 +275,7 @@ class DnfPackageManager(PackageManager):
         try:
             # DNF supports listing all available versions with the --showduplicates flag
             cmd = [self.dnf_path, 'list', '--showduplicates', package_name]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            result = self._safe_run_rpm_command(cmd, check=False)
             
             if result.returncode != 0:
                 return False
@@ -243,7 +322,7 @@ class DnfPackageManager(PackageManager):
             else:
                 cmd.append(package_name)
             
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            result = self._safe_run_rpm_command(cmd, check=True)
             return result.returncode == 0
             
         except subprocess.SubprocessError as e:
