@@ -589,13 +589,21 @@ class Migrator:
         configs_dir = os.path.join(os.path.dirname(backup_file), "config_files")
         os.makedirs(configs_dir, exist_ok=True)
         
+        # Filter packages to include only manually installed ones
+        manually_installed_packages = [pkg for pkg in self.installed_packages if getattr(pkg, 'manually_installed', False)]
+        
+        manual_count = len(manually_installed_packages)
+        total_count = len(self.installed_packages)
+        logger.info(f"Backing up {manual_count} manually installed packages out of {total_count} total packages")
+        print(f"Backing up {manual_count} manually installed packages (excluding dependencies)")
+
         # Create a backup data structure
         backup_data = {
             "timestamp": timestamp,
             "version": __version__,
             "hostname": hostname,
             "system_variables": self.system_variables.to_dict(),
-            "packages": [pkg.to_dict() for pkg in self.installed_packages],
+            "packages": [pkg.to_dict() for pkg in manually_installed_packages],
             "config_files": [],
         }
         
@@ -1195,7 +1203,7 @@ class Migrator:
             with open(backup_file, 'r') as f:
                 backup_data = json.load(f)
                 
-            # Extract packages
+            # Extract packages - only user-installed packages are included in the backup
             packages = backup_data.get("packages", [])
             if not packages:
                 logger.warning("No packages found in backup")
@@ -1207,6 +1215,7 @@ class Migrator:
                 }
                 
             logger.info(f"Found {len(packages)} packages in backup")
+            print(f"Planning installation of {len(packages)} packages with dependencies...")
             
             # Group packages by their source (apt, dnf, snap, etc.)
             grouped_packages = {}
@@ -1962,17 +1971,16 @@ class Migrator:
             with open(backup_file, 'r') as f:
                 backup_data = json.load(f)
                 
-            # Get manually installed packages only
-            packages = [p for p in backup_data.get("packages", []) 
-                        if p.get("manually_installed", False)]
+            # Get packages from backup (only user-installed packages are included)
+            packages = backup_data.get("packages", [])
                         
             if not packages:
-                logger.warning("No manually installed packages found in backup")
-                print("No manually installed packages found to install")
+                logger.warning("No packages found in backup")
+                print("No packages found to install")
                 return True
                 
-            logger.info(f"Found {len(packages)} manually installed packages to restore")
-            print(f"Installing {len(packages)} manually installed packages...")
+            logger.info(f"Found {len(packages)} packages to restore")
+            print(f"Installing {len(packages)} packages with dependencies...")
             
             # Group packages by manager for more efficient installation
             packages_by_manager = {}
@@ -2028,7 +2036,7 @@ class Migrator:
                             if latest and latest > version:
                                 version = latest
                                 
-                    # Install the package
+                    # Install the package with automatic dependency resolution
                     if version and version_policy == 'exact':
                         # Try to install the exact version
                         if manager.is_version_available(name, version):
@@ -2046,7 +2054,7 @@ class Migrator:
                     else:
                         logger.error(f"Failed to install {name}")
                         
-                print(f"\r  Installed {success_count}/{len(pkgs)} packages                ")
+                print(f"\r  Installed {success_count}/{len(pkgs)} packages with their dependencies       ")
                 
             logger.info("Package installation completed")
             print("\nPackage installation completed")
@@ -2345,9 +2353,8 @@ class Migrator:
                     "reason": f"Backup is from {source_distro}, but current system is {self.distro_info.name}"
                 })
                 
-            # Get manually installed packages only
-            packages = [p for p in backup_data.get("packages", []) 
-                        if p.get("manually_installed", False)]
+            # Get packages from backup (only user-installed packages are included in the backup)
+            packages = backup_data.get("packages", [])
                         
             report["packages"]["total"] = len(packages)
             
