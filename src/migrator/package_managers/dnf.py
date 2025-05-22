@@ -307,8 +307,66 @@ class DnfPackageManager(PackageManager):
             # Try python3- prefix
             if not package_name.startswith('python'):
                 variations.append(f"python3-{package_name}")
+                
+            # First try using dnf list available which is more reliable
+            cmd = [self.dnf_path, 'list', 'available', package_name]
+            result = self._safe_run_rpm_command(cmd, check=False)
             
-            # Check all variations
+            if result.returncode == 0:
+                # Parse the output to find matching packages
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    
+                    # Skip metadata and header lines
+                    if not line or line.startswith('Last metadata') or line.startswith('Available Packages'):
+                        continue
+                        
+                    # Parse package line (format: name.arch  version  repo)
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pkg_name_with_arch = parts[0]
+                        # Split off architecture (e.g., firefox.x86_64 -> firefox)
+                        pkg_name = pkg_name_with_arch.split('.')[0]
+                        
+                        if pkg_name.lower() == package_name.lower():
+                            # Direct match
+                            self.availability_cache[package_name] = True
+                            logger.debug(f"Package {package_name} found available in repositories")
+                            return True
+            
+            # If not found by direct check, try variations
+            for variation in variations:
+                if variation == package_name:
+                    continue  # Skip the original name which we already checked
+                    
+                cmd = [self.dnf_path, 'list', 'available', variation]
+                result = self._safe_run_rpm_command(cmd, check=False)
+                
+                if result.returncode == 0:
+                    # Parse the output
+                    for line in result.stdout.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith('Last metadata') or line.startswith('Available Packages'):
+                            continue
+                            
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            pkg_name_with_arch = parts[0]
+                            pkg_name = pkg_name_with_arch.split('.')[0]
+                            
+                            if pkg_name.lower() == variation.lower():
+                                # Found a variation match
+                                self.availability_cache[package_name] = True
+                                self.availability_cache[variation] = True
+                                logger.debug(f"Package {package_name} available as {variation}")
+                                
+                                # Periodically save the cache (every 50 new entries)
+                                if len(self.availability_cache) % 50 == 0:
+                                    self._save_availability_cache()
+                                    
+                                return True
+            
+            # Fall back to dnf info if list failed (some versions of DNF handle different commands better)
             for variation in variations:
                 cmd = [self.dnf_path, 'info', variation]
                 result = self._safe_run_rpm_command(cmd, check=False)
@@ -317,6 +375,7 @@ class DnfPackageManager(PackageManager):
                     # Cache both the original name and the variation as available
                     self.availability_cache[package_name] = True
                     self.availability_cache[variation] = True
+                    logger.debug(f"Package {package_name} available via info command")
                     
                     # Periodically save the cache (every 50 new entries)
                     if len(self.availability_cache) % 50 == 0:
@@ -326,14 +385,16 @@ class DnfPackageManager(PackageManager):
             
             # If we get here, none of the variations were available
             self.availability_cache[package_name] = False
+            logger.debug(f"Package {package_name} not available (checked all variations)")
             
             # Periodically save the cache (every 50 new entries)
             if len(self.availability_cache) % 50 == 0:
                 self._save_availability_cache()
                 
             return False
-        except subprocess.SubprocessError:
+        except subprocess.SubprocessError as e:
             # On error, cache as not available
+            logger.warning(f"Error checking availability for {package_name}: {e}")
             self.availability_cache[package_name] = False
             return False
     
@@ -588,112 +649,174 @@ class DnfPackageManager(PackageManager):
             
         logger.info(f"Bulk checking availability for {len(package_names)} packages...")
         
+        # Deduplicate the package list and only check packages not already in cache
+        packages_to_check = list(set([pkg for pkg in package_names if pkg not in self.availability_cache]))
+        if not packages_to_check:
+            logger.info(f"All {len(package_names)} packages already in cache")
+            return
+            
+        logger.info(f"Need to check {len(packages_to_check)} unique packages")
+        
+        # Use a smaller batch size to avoid command line length issues
+        batch_size = 25
+        total_batches = (len(packages_to_check) + batch_size - 1) // batch_size
+        total_available = 0
+        
+        # First try 'dnf list available' with wildcards to get all available packages
         try:
-            # Approach 1: Get a list of all available packages from DNF repositories using repoquery
-            try:
-                cmd = [self.dnf_path, 'repoquery', '--available', '--queryformat', '%{name}']
-                result = self._safe_run_rpm_command(cmd, check=False, timeout=30)
-                
-                if result.returncode == 0:
-                    available_pkgs = set(result.stdout.splitlines())
-                    logger.info(f"Found {len(available_pkgs)} available packages using repoquery")
+            # Get a full list of available packages in one command
+            cmd = [self.dnf_path, 'list', 'available', '--quiet']
+            logger.info(f"Running: {' '.join(cmd)}")
+            print(f"Loading available package list from repositories...")
+            result = self._safe_run_rpm_command(cmd, check=False, timeout=60)
+            
+            if result.returncode == 0:
+                # Process all available packages
+                available_packages = set()
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith('Last metadata') or line.startswith('Available Packages'):
+                        continue
                     
-                    # Update cache for all requested packages
-                    for pkg_name in package_names:
-                        self.availability_cache[pkg_name] = pkg_name in available_pkgs
-                        
-                        # Also check for common variations for packages not found directly
-                        if not self.availability_cache[pkg_name]:
-                            # Try with variations for lib packages
-                            if pkg_name.startswith('lib') and not pkg_name.endswith('-devel'):
-                                lib_devel = f"{pkg_name}-devel"
-                                if lib_devel in available_pkgs:
-                                    self.availability_cache[pkg_name] = True
-                                    logger.debug(f"Found package variation: {pkg_name} -> {lib_devel}")
+                    # Parse line (format: name.arch  version  repo)
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pkg_name_with_arch = parts[0]
+                        # Extract package name without architecture
+                        pkg_name = pkg_name_with_arch.split('.')[0]
+                        available_packages.add(pkg_name.lower())
+                
+                # Update availability cache
+                for pkg in packages_to_check:
+                    is_available = pkg.lower() in available_packages
+                    self.availability_cache[pkg] = is_available
+                    
+                    if is_available:
+                        total_available += 1
+                    
+                logger.info(f"Found {len(available_packages)} available packages in repositories")
+                logger.info(f"Matched {total_available} packages from our list of {len(packages_to_check)}")
+                
+                # Also check for common variations for packages not found
+                for pkg in packages_to_check:
+                    if not self.availability_cache.get(pkg, False):
+                        # Try common variations
+                        if pkg == '7zip' and 'p7zip'.lower() in available_packages:
+                            self.availability_cache[pkg] = True
+                            total_available += 1
+                            logger.debug(f"Package {pkg} available as p7zip")
                             
-                            # Try p7zip for 7zip
-                            if pkg_name == '7zip' and 'p7zip' in available_pkgs:
-                                self.availability_cache[pkg_name] = True
-                                logger.debug(f"Found package variation: {pkg_name} -> p7zip")
+                        elif pkg.startswith('lib') and not pkg.endswith('-devel'):
+                            devel_pkg = f"{pkg}-devel"
+                            if devel_pkg.lower() in available_packages:
+                                self.availability_cache[pkg] = True
+                                total_available += 1
+                                logger.debug(f"Package {pkg} available as {devel_pkg}")
                                 
-                            # Try python variations
-                            if not pkg_name.startswith('python'):
-                                python3_pkg = f"python3-{pkg_name}"
-                                if python3_pkg in available_pkgs:
-                                    self.availability_cache[pkg_name] = True
-                                    logger.debug(f"Found package variation: {pkg_name} -> {python3_pkg}")
-                    
-                    # Save the cache
-                    self.cache_timestamp = time.time()
-                    self._save_availability_cache()
-                    
-                    logger.info(f"Bulk availability check complete, {len(available_pkgs)} packages available")
-                    return
-            except Exception as e:
-                logger.warning(f"Error during repoquery bulk availability check: {e}")
+                        elif not pkg.startswith('python'):
+                            python_pkg = f"python3-{pkg}"
+                            if python_pkg.lower() in available_packages:
+                                self.availability_cache[pkg] = True
+                                total_available += 1
+                                logger.debug(f"Package {pkg} available as {python_pkg}")
                 
-            # Approach 2: If repoquery fails, try dnf list available
+                # Save the cache
+                self._save_availability_cache()
+                logger.info(f"Updated availability cache with {total_available} available packages")
+                return
+        except Exception as e:
+            logger.warning(f"Error getting full list of available packages: {e}")
+            # Fall back to batch processing
+        
+        # Fall back to batch processing if the full list approach failed
+        logger.info(f"Falling back to batch processing ({total_batches} batches of up to {batch_size} packages)")
+        total_available = 0
+        
+        for i in range(0, len(packages_to_check), batch_size):
+            batch = packages_to_check[i:i+batch_size]
+            logger.info(f"Checking batch {i//batch_size + 1}/{total_batches} ({len(batch)} packages)")
+            
             try:
-                cmd = [self.dnf_path, 'list', 'available']
+                # Run dnf list for the batch
+                cmd = [self.dnf_path, 'list', 'available'] + batch
                 result = self._safe_run_rpm_command(cmd, check=False, timeout=30)
                 
+                # Process the output to determine which packages are available
+                available_in_batch = set()
+                
                 if result.returncode == 0:
-                    # Parse the output to extract package names
-                    available_pkgs = set()
+                    # Parse the output for available packages
+                    in_available_section = False
+                    
                     for line in result.stdout.splitlines():
-                        if line.startswith('Last metadata') or line.startswith('Available Packages') or not line.strip():
+                        line = line.strip()
+                        
+                        if "Available Packages" in line:
+                            in_available_section = True
                             continue
                             
+                        if not in_available_section or not line:
+                            continue
+                            
+                        # Available package lines are in format: name.arch  version  repo
                         parts = line.split()
-                        if len(parts) >= 1:
-                            pkg_full = parts[0]
-                            # Extract base package name without architecture suffix
-                            pkg_name = pkg_full.split('.')[0]
-                            available_pkgs.add(pkg_name)
+                        if len(parts) >= 2:
+                            # Extract the package name without architecture
+                            pkg_name_with_arch = parts[0]
+                            # Split off the architecture (e.g., firefox.x86_64 -> firefox)
+                            pkg_name = pkg_name_with_arch.split('.')[0]
+                            available_in_batch.add(pkg_name.lower())
+                            logger.debug(f"Found available package: {pkg_name}")
+                
+                # Update cache with results (case-insensitive matching)
+                for pkg in batch:
+                    is_available = pkg.lower() in available_in_batch
+                    self.availability_cache[pkg] = is_available
                     
-                    logger.info(f"Found {len(available_pkgs)} available packages using dnf list")
-                    
-                    # Update cache for all requested packages
-                    for pkg_name in package_names:
-                        self.availability_cache[pkg_name] = pkg_name in available_pkgs
+                    if is_available:
+                        total_available += 1
+                        logger.debug(f"Package {pkg} is available")
+                    else:
+                        logger.debug(f"Package {pkg} is not available")
                         
-                        # Also check for common variations
-                        if not self.availability_cache[pkg_name]:
-                            # Same variations as in approach 1
-                            if pkg_name.startswith('lib') and not pkg_name.endswith('-devel'):
-                                lib_devel = f"{pkg_name}-devel"
-                                if lib_devel in available_pkgs:
-                                    self.availability_cache[pkg_name] = True
-                                    
-                            if pkg_name == '7zip' and 'p7zip' in available_pkgs:
-                                self.availability_cache[pkg_name] = True
-                                
-                            if not pkg_name.startswith('python'):
-                                python3_pkg = f"python3-{pkg_name}"
-                                if python3_pkg in available_pkgs:
-                                    self.availability_cache[pkg_name] = True
-                    
-                    # Save the cache
-                    self.cache_timestamp = time.time()
+                    # Also check common variations
+                    if not is_available:
+                        # Special case for 7zip -> p7zip
+                        if pkg.lower() == '7zip' and 'p7zip'.lower() in available_in_batch:
+                            self.availability_cache[pkg] = True
+                            total_available += 1
+                            logger.debug(f"Package {pkg} is available as p7zip")
+                            
+                        # Try lib packages with -devel suffix
+                        elif pkg.lower().startswith('lib') and not pkg.lower().endswith('-devel'):
+                            lib_devel = f"{pkg}-devel"
+                            if lib_devel.lower() in available_in_batch:
+                                self.availability_cache[pkg] = True
+                                total_available += 1
+                                logger.debug(f"Package {pkg} is available as {lib_devel}")
+                        
+                        # Try python variations
+                        elif not pkg.lower().startswith('python'):
+                            python3_pkg = f"python3-{pkg}"
+                            if python3_pkg.lower() in available_in_batch:
+                                self.availability_cache[pkg] = True
+                                total_available += 1
+                                logger.debug(f"Package {pkg} is available as {python3_pkg}")
+                
+                # Save the cache periodically
+                if (i // batch_size) % 5 == 0:
                     self._save_availability_cache()
                     
-                    logger.info(f"Bulk availability check complete using list method")
-                    return
             except Exception as e:
-                logger.warning(f"Error during dnf list bulk availability check: {e}")
-            
-            # Approach 3: If all else fails, do batch processing of package searches
-            logger.info("Falling back to batch search for packages")
-            self.batch_search_packages(package_names)
-            
-        except Exception as e:
-            logger.warning(f"Error during bulk availability check: {e}")
-            logger.info("Falling back to individual checks")
-            
-            # If bulk check fails, populate cache with individual checks
-            for pkg_name in package_names:
-                if pkg_name not in self.availability_cache:
-                    self.is_package_available(pkg_name)
+                logger.warning(f"Error checking batch {i//batch_size + 1}: {e}")
+                # Mark all packages in this batch as unavailable on error
+                for pkg in batch:
+                    self.availability_cache[pkg] = False
+        
+        # Final cache save
+        logger.info(f"Updated availability cache with {total_available} available packages")
+        self.cache_timestamp = time.time()
+        self._save_availability_cache()
     
     def batch_search_packages(self, package_names: List[str], batch_size: int = 50) -> Dict[str, bool]:
         """Search for multiple packages in batches and update availability cache

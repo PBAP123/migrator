@@ -1471,16 +1471,16 @@ class Migrator:
                                 
                                 # Process the results
                                 mapped_count = 0
-                                for pkg, equivalent_name in results:
+                                for source_pkg, target_pkg, mapping_type, is_pkg_available in results:
                                     try:
                                         # Extract package details, handling both dict and string packages
-                                        if isinstance(pkg, dict):
-                                            pkg_name = pkg.get('name', '')
-                                            pkg_source = pkg.get('source', actual_source)
-                                            pkg_arch = pkg.get('architecture', None)
+                                        if isinstance(source_pkg, dict):
+                                            pkg_name = source_pkg.get('name', '')
+                                            pkg_source = source_pkg.get('source', actual_source)
+                                            pkg_arch = source_pkg.get('architecture', None)
                                         else:
                                             # For string packages or other types
-                                            pkg_name = str(pkg)
+                                            pkg_name = str(source_pkg)
                                             pkg_source = actual_source
                                             pkg_arch = None
                                             
@@ -1491,14 +1491,14 @@ class Migrator:
                                                 pkg_arch = name_parts[1] if len(name_parts) > 1 else None
                                         
                                         # Skip if no equivalent name or empty package name
-                                        if not equivalent_name or not pkg_name:
+                                        if not target_pkg or not pkg_name:
                                             continue
                                             
                                         # Check if equivalent package is available
-                                        if target_pm and target_pm.is_package_available(equivalent_name):
+                                        if is_pkg_available:
                                             # Create a new package dict for the available package
                                             pkg_dict = {
-                                                'name': equivalent_name,
+                                                'name': target_pkg,
                                                 'source': target_pkg_format,
                                                 'original_name': pkg_name,
                                                 'original_source': pkg_source
@@ -1509,7 +1509,7 @@ class Migrator:
                                                 pkg_dict['architecture'] = pkg_arch
                                                 
                                             # Try to get version information
-                                            latest_version = target_pm.get_latest_version(equivalent_name)
+                                            latest_version = target_pm.get_latest_version(target_pkg)
                                             if latest_version:
                                                 pkg_dict['version'] = latest_version
                                     
@@ -1520,17 +1520,17 @@ class Migrator:
                                             cmd = ""
                                             if target_pkg_format == "apt":
                                                 arch_suffix = f":{pkg_arch}" if pkg_arch else ""
-                                                cmd = f"apt install -y {equivalent_name}{arch_suffix}"
+                                                cmd = f"apt install -y {target_pkg}{arch_suffix}"
                                             elif target_pkg_format == "dnf":
-                                                cmd = f"dnf install -y {equivalent_name}"
+                                                cmd = f"dnf install -y {target_pkg}"
                                             elif target_pkg_format == "pacman":
-                                                cmd = f"pacman -S --noconfirm {equivalent_name}"
+                                                cmd = f"pacman -S --noconfirm {target_pkg}"
                                     
                                             installation_commands.append(cmd)
                                             mapped_count += 1
                                             
                                     except Exception as result_error:
-                                        logger.error(f"Error processing mapping result for {pkg}: {result_error}")
+                                        logger.error(f"Error processing mapping result for {source_pkg}: {result_error}")
                                         continue
                                 
                                 # Check if any packages were successfully mapped
@@ -1563,8 +1563,12 @@ class Migrator:
                                             
                                         # Check if the equivalent package is available
                                         if equiv_name:
-                                            is_avail = is_available(equiv_name)
-                                            logger.info(f"  Package {pkg_name} -> {equiv_name} (mapping: {reason}, available: {is_avail})")
+                                            # Check availability using the target package manager
+                                            if target_pm:
+                                                is_avail = target_pm.is_package_available(equiv_name)
+                                                logger.info(f"  Package {pkg_name} -> {equiv_name} (mapping: {reason}, available: {is_avail})")
+                                            else:
+                                                logger.info(f"  Package {pkg_name} -> {equiv_name} (mapping: {reason}, available: unknown)")
                                         else:
                                             logger.info(f"  Package {pkg_name} -> {equiv_name} (mapping: {reason})")
                                     

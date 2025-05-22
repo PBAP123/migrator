@@ -38,6 +38,7 @@ class PackageMapper:
         self.equiv_map = {}
         self.load_equivalence_map()
         self.search_cache = {}  # Cache for package search results
+        self.custom_mappings = {}  # Initialize custom_mappings attribute
         
     def load_equivalence_map(self):
         """Load the package equivalence map from built-in data and user customizations"""
@@ -710,6 +711,10 @@ class PackageMapper:
                         self.equiv_map[pkg].update(mappings)
                     else:
                         self.equiv_map[pkg] = mappings
+                    
+                    # Also add to custom_mappings for separate tracking
+                    self.custom_mappings[pkg] = mappings
+                    
                 logger.info(f"Loaded {len(user_map)} custom package mappings from {user_map_path}")
             except Exception as e:
                 logger.error(f"Error loading custom package mappings: {e}")
@@ -727,197 +732,282 @@ class PackageMapper:
             progress_callback: Function to report progress
             
         Returns:
-            List of tuples containing (original package dict or string, equivalent package name or None)
+            List of tuples (source_package, target_package, mapping_type, is_available)
         """
-        # Initialize an empty results list
         results = []
+        total = len(packages)
         
-        # If no packages, return empty results
-        if not packages:
-            return results
+        logger.info(f"Processing {total} packages from {source_type} to {target_type}")
         
-        # Get the total number of packages
-        total_packages = len(packages)
-        
-        # Print initial progress message
-        if progress_callback:
-            progress_callback(0, total_packages, "Starting package mapping")
-        else:
-            print(f"Finding equivalent packages: 0/{total_packages} (0%)")
-            sys.stdout.flush()
-        
-        # Keep track of last progress update time to avoid too frequent updates
-        last_update_time = time.time()
-        
-        # Enable more detailed debugging for diagnostic purposes
-        debug_count = 0
-        mapped_count = 0
-        available_count = 0
-        mapping_reasons = {
-            "direct": 0,
-            "custom": 0,
-            "pattern": 0,
-            "normalized": 0,
-            "failed": 0
+        # Lookup table for manual mappings from common Ubuntu packages to Fedora packages
+        ubuntu_to_fedora = {
+            'synaptic': 'dnfdragora',  # Package manager GUI
+            'apt': 'dnf',  # Package manager
+            'apt-utils': 'dnf-utils',  # Package manager utilities
+            'software-center': 'gnome-software',  # Software center
+            'ubuntu-restricted-addons': 'rpmfusion-free-release rpmfusion-nonfree-release',  # Restricted addons
+            'ubuntu-restricted-extras': 'rpmfusion-free-release rpmfusion-nonfree-release',  # Restricted extras
+            'ffmpeg': 'ffmpeg',  # Media converter
+            'vlc': 'vlc',  # Media player
+            'gdebi': 'dnf',  # Package installer
+            'gdebi-core': 'dnf-plugins-core',  # Package installer core
+            'nautilus': 'nautilus',  # File manager
+            'thunar': 'thunar',  # File manager
+            'dolphin': 'dolphin',  # File manager
+            'python3-pip': 'python3-pip',  # Python package manager
+            'python-pip': 'python3-pip',  # Python package manager
+            'virt-manager': 'virt-manager',  # Virtual machine manager
+            'vim': 'vim',  # Text editor
+            'nano': 'nano',  # Text editor
+            'emacs': 'emacs',  # Text editor
+            'wget': 'wget',  # Download tool
+            'curl': 'curl',  # Download tool
+            'gcc': 'gcc',  # C compiler
+            'g++': 'gcc-c++',  # C++ compiler
+            'make': 'make',  # Build tool
+            'git': 'git',  # Version control
+            'subversion': 'subversion',  # Version control
+            'firefox': 'firefox',  # Web browser
+            'chromium-browser': 'chromium',  # Web browser
+            'gimp': 'gimp',  # Image editor
+            'inkscape': 'inkscape',  # Vector editor
+            'audacity': 'audacity',  # Audio editor
+            'obs-studio': 'obs-studio',  # Streaming software
+            'steam': 'steam',  # Gaming platform
         }
         
-        # Process each package
-        for i, pkg in enumerate(packages):
-            # Default to no equivalent name found
-            equivalent_name = None
-            mapping_reason = "failed"
+        # Reverse mapping for Fedora to Ubuntu
+        fedora_to_ubuntu = {v: k for k, v in ubuntu_to_fedora.items() if ' ' not in v}  # Exclude multi-package values
+        
+        # Count statistics for different mapping types
+        mapping_stats = {
+            'custom': 0,
+            'builtin': 0,
+            'user': 0,
+            'pattern': 0,
+            'original': 0,
+            'variation': 0,
+            'unavailable': 0
+        }
+        
+        # First preprocess packages to ensure consistent format
+        processed_packages = []
+        for pkg in packages:
+            if isinstance(pkg, dict):
+                processed_packages.append(pkg)
+            else:
+                # Convert string to dict
+                processed_packages.append({
+                    'name': str(pkg),
+                    'source': source_type
+                })
+        
+        for i, package in enumerate(processed_packages):
+            source_pkg = package
+            if isinstance(package, dict):
+                source_pkg_name = package.get('name', '')
+            else:
+                source_pkg_name = str(package)
+            
+            # Skip empty package names
+            if not source_pkg_name:
+                logger.warning(f"Skipping empty package name: {package}")
+                continue
+                
+            # Skip system packages
+            if self.is_system_package(source_pkg_name):
+                logger.info(f"Skipping system package: {source_pkg_name}")
+                continue
+            
+            # Try to find an equivalent package name for the target system
+            target_pkg = None
+            mapping_type = None
             is_available = False
             
-            try:
-                # Extract package name based on package type
-                pkg_name = ""
+            # 1. First check manual mappings based on source and target
+            if source_type == 'apt' and target_type == 'dnf' and source_pkg_name in ubuntu_to_fedora:
+                target_pkg = ubuntu_to_fedora[source_pkg_name]
+                mapping_type = 'custom'
+                mapping_stats['custom'] += 1
+                logger.debug(f"Package {source_pkg_name}: Found custom apt→dnf mapping to {target_pkg}")
+            elif source_type == 'dnf' and target_type == 'apt' and source_pkg_name in fedora_to_ubuntu:
+                target_pkg = fedora_to_ubuntu[source_pkg_name]
+                mapping_type = 'custom'
+                mapping_stats['custom'] += 1
+                logger.debug(f"Package {source_pkg_name}: Found custom dnf→apt mapping to {target_pkg}")
+            
+            # 2. Next check built-in equivalence map
+            if not target_pkg and source_pkg_name in self.equiv_map:
+                if target_type in self.equiv_map[source_pkg_name]:
+                    target_pkg = self.equiv_map[source_pkg_name][target_type]
+                    mapping_type = 'builtin'
+                    mapping_stats['builtin'] += 1
+                    logger.debug(f"Package {source_pkg_name}: Found built-in mapping to {target_pkg}")
+            
+            # 3. Check user custom mappings
+            if not target_pkg and source_pkg_name in self.custom_mappings:
+                if target_type in self.custom_mappings[source_pkg_name]:
+                    target_pkg = self.custom_mappings[source_pkg_name][target_type]
+                    mapping_type = 'user'
+                    mapping_stats['user'] += 1
+                    logger.debug(f"Package {source_pkg_name}: Found user-defined mapping to {target_pkg}")
+            
+            # 4. Try pattern matching - many packages have the same name across distributions
+            if not target_pkg:
+                # For most common packages, the name is the same
+                target_pkg = source_pkg_name
+                mapping_type = 'original'
+                mapping_stats['original'] += 1
                 
-                # Handle dictionary packages
-                if isinstance(pkg, dict):
-                    if 'name' in pkg:
-                        pkg_name = str(pkg['name'])
-                # Handle string packages
-                elif isinstance(pkg, str):
-                    pkg_name = pkg
-                # Try to handle any other type by converting to string
-                else:
-                    try:
-                        pkg_name = str(pkg)
-                    except:
-                        # If conversion fails, skip this package
-                        logger.warning(f"Cannot process package of type {type(pkg)}")
-                        results.append((pkg, None))
-                        continue
-                
-                # Skip if we couldn't extract a package name
-                if not pkg_name:
-                    results.append((pkg, None))
-                    continue
+                # Handle special cases with pattern matching
+                if target_type == 'dnf' and source_pkg_name.startswith('lib') and source_pkg_name.endswith('-dev'):
+                    # Convert Ubuntu lib*-dev to Fedora lib*-devel
+                    target_pkg = f"{source_pkg_name[:-4]}-devel"
+                    mapping_type = 'pattern'
+                    mapping_stats['pattern'] += 1
+                    logger.debug(f"Package {source_pkg_name}: Applied lib-dev→lib-devel pattern, mapped to {target_pkg}")
+                elif target_type == 'apt' and source_pkg_name.startswith('lib') and source_pkg_name.endswith('-devel'):
+                    # Convert Fedora lib*-devel to Ubuntu lib*-dev
+                    target_pkg = f"{source_pkg_name[:-6]}-dev"
+                    mapping_type = 'pattern'
+                    mapping_stats['pattern'] += 1
+                    logger.debug(f"Package {source_pkg_name}: Applied lib-devel→lib-dev pattern, mapped to {target_pkg}")
                     
-                # Handle architecture specifiers like ":amd64"
-                if ':' in pkg_name:
-                    pkg_name = pkg_name.split(':')[0]
-                
-                # Get equivalent package name - this is the simplest and safest approach
+                # Handle python packages
+                if target_type == 'dnf' and source_pkg_name.startswith('python3-'):
+                    # Ubuntu python3 packages usually have the same name in Fedora
+                    target_pkg = source_pkg_name
+                    mapping_type = 'pattern'
+                    mapping_stats['pattern'] += 1
+                    logger.debug(f"Package {source_pkg_name}: Python package pattern match to {target_pkg}")
+                elif target_type == 'apt' and source_pkg_name.startswith('python3-'):
+                    # Fedora python3 packages usually have the same name in Ubuntu
+                    target_pkg = source_pkg_name
+                    mapping_type = 'pattern'
+                    mapping_stats['pattern'] += 1
+                    logger.debug(f"Package {source_pkg_name}: Python package pattern match to {target_pkg}")
+            
+            # Check if the target package is available
+            if target_pkg and available_check_fn:
                 try:
-                    equivalent_name, mapping_reason = self._get_equivalent_package_with_reason(pkg_name, source_type, target_type)
-                    
-                    # Debug output for first few packages to understand mapping process
-                    if debug_count < 10:
-                        logger.info(f"Package mapping for {pkg_name}: {equivalent_name} (reason: {mapping_reason})")
-                        debug_count += 1
+                    # Check availability for each package if space-separated
+                    if ' ' in target_pkg:
+                        packages_to_check = target_pkg.split()
+                        is_available = any(available_check_fn(pkg) for pkg in packages_to_check)
                         
-                    # Count successful mappings by reason
-                    if equivalent_name:
-                        mapped_count += 1
-                        if mapping_reason in mapping_reasons:
-                            mapping_reasons[mapping_reason] += 1
-                        
-                except Exception as e:
-                    logger.error(f"Error finding equivalent package for {pkg_name}: {e}")
-                    equivalent_name = None
-                    mapping_reason = "error"
-                
-                # Check if the equivalent package is available if a check function was provided
-                if equivalent_name and available_check_fn:
-                    try:
-                        # First check: Is the mapped name directly available?
-                        is_available = available_check_fn(equivalent_name)
-                        
+                        # Log which specific package is available
                         if is_available:
-                            available_count += 1
+                            for pkg in packages_to_check:
+                                if available_check_fn(pkg):
+                                    logger.debug(f"Package {source_pkg_name} → {target_pkg}: Found available package: {pkg}")
+                                    break
                         else:
-                            # Log for debugging availability issues
-                            if debug_count < 20:
-                                logger.info(f"Package {pkg_name} -> {equivalent_name} (mapping: {mapping_reason}, available: {is_available})")
-                                
-                            # Try standard package name variations for common packages
-                            if target_type == 'dnf':
-                                alternative_names = []
-                                # Common Fedora package name variations
-                                if equivalent_name.startswith('lib') and not equivalent_name.endswith('-devel'):
-                                    alternative_names.append(f"{equivalent_name}-devel")
-                                if not equivalent_name.startswith('lib'):
-                                    alternative_names.append(f"lib{equivalent_name}")
-                                # Check 7zip -> p7zip specifically
-                                if equivalent_name == '7zip':
-                                    alternative_names.append('p7zip')
-                                # Try python3- prefix
-                                if not equivalent_name.startswith('python'):
-                                    alternative_names.append(f"python3-{equivalent_name}")
-                                
-                                # Check each alternative
-                                for alt_name in alternative_names:
-                                    if available_check_fn(alt_name):
-                                        equivalent_name = alt_name
-                                        is_available = True
-                                        available_count += 1
-                                        logger.info(f"Found alternative: {pkg_name} -> {alt_name}")
-                                        break
-                                
-                            # If still not available, try to find a similar package
-                            if not is_available:
-                                try:
-                                    similar_name = self.find_package_with_similar_name(
-                                        equivalent_name, target_type, available_check_fn
-                                    )
-                                    if similar_name:
-                                        equivalent_name = similar_name
-                                        is_available = True
-                                        available_count += 1
-                                        mapping_reason = "similar_search"
-                                        logger.info(f"Found similar: {pkg_name} -> {similar_name}")
-                                    else:
-                                        # If no similar package found with the equivalent name, try with the original
-                                        similar_name = self.find_package_with_similar_name(
-                                            pkg_name, target_type, available_check_fn
-                                        )
-                                        if similar_name:
-                                            equivalent_name = similar_name
-                                            is_available = True
-                                            available_count += 1
-                                            mapping_reason = "original_search"
-                                            logger.info(f"Found from original: {pkg_name} -> {similar_name}")
-                                except Exception as e:
-                                    logger.error(f"Error finding similar package for {equivalent_name}: {e}")
-                    except Exception as e:
-                        logger.error(f"Error checking availability for {equivalent_name}: {e}")
-                
-            except Exception as e:
-                logger.error(f"Error mapping package {str(pkg)[:30]}: {e}")
-                equivalent_name = None
+                            logger.debug(f"Package {source_pkg_name} → {target_pkg}: None of the packages are available")
+                    else:
+                        is_available = available_check_fn(target_pkg)
+                        
+                    # Log detailed diagnostics about availability check
+                    logger.info(f"Package {source_pkg_name} → {target_pkg} (mapping: {mapping_type}, available: {is_available})")
+                    
+                    # If not available, try some common variations
+                    if not is_available and target_type == 'dnf':
+                        # Try common Fedora variations for unavailable packages
+                        variations = []
+                        
+                        # Check if removing lib prefix helps (some packages don't have lib prefix in Fedora)
+                        if target_pkg.startswith('lib') and len(target_pkg) > 3:
+                            variations.append(target_pkg[3:])
+                            
+                        # Check if adding 'python3-' prefix helps
+                        if not target_pkg.startswith('python'):
+                            variations.append(f"python3-{target_pkg}")
+                            
+                        # Try variations
+                        for variation in variations:
+                            logger.debug(f"Package {source_pkg_name}: Trying variation {variation}")
+                            if available_check_fn(variation):
+                                target_pkg = variation
+                                is_available = True
+                                mapping_type = 'variation'
+                                mapping_stats['variation'] += 1
+                                logger.info(f"Found available variation: {source_pkg_name} → {target_pkg}")
+                                break
+                        
+                        if not is_available:
+                            logger.warning(f"Package {source_pkg_name} → {target_pkg}: Not available and no variations found")
+                            mapping_stats['unavailable'] += 1
+                    
+                    # If not available, try direct search (experimental)
+                    if not is_available and target_type == 'dnf':
+                        # This would require a new method to search repositories
+                        pass
+                            
+                except Exception as e:
+                    logger.error(f"Error checking availability for {target_pkg}: {e}")
             
-            # Only append available equivalents to results
-            if is_available:
-                results.append((pkg, equivalent_name))
-            else:
-                results.append((pkg, None))
+            results.append((source_pkg, target_pkg, mapping_type, is_available))
             
-            # Update progress
-            current_time = time.time()
-            if current_time - last_update_time >= 0.5 or i == total_packages - 1:  # Update every 0.5s or last item
-                progress_percent = (i + 1) / total_packages * 100
-                
-                if progress_callback:
-                    progress_callback(i + 1, total_packages, f"Mapped {i + 1}/{total_packages} packages")
-                else:
-                    print(f"\rFinding equivalent packages: {i + 1}/{total_packages} ({progress_percent:.1f}%)", end="")
-                    sys.stdout.flush()
-                
-                last_update_time = current_time
+            # Report progress
+            if progress_callback and i % 10 == 0:
+                progress_callback(i, total)
         
-        # Final progress update and statistics
-        if not progress_callback:
-            print()  # Add newline after progress reporting
+        # Report final progress
+        if progress_callback:
+            progress_callback(total, total)
             
-        # Log summary of mapping statistics
-        logger.info(f"Package mapping complete: {mapped_count}/{total_packages} packages mapped ({available_count} available)")
-        logger.info(f"Mapping methods: Direct={mapping_reasons['direct']}, Custom={mapping_reasons['custom']}, " +
-                   f"Pattern={mapping_reasons['pattern']}, Normalized={mapping_reasons['normalized']}, " +
-                   f"Failed={mapping_reasons['failed']}")
+        # Log mapping summary and statistics
+        available_count = sum(1 for _, _, _, avail in results if avail)
+        logger.info(f"Package mapping complete: {len(results)}/{total} packages mapped ({available_count} available)")
+        logger.info(f"Mapping statistics: {mapping_stats}")
         
         return results
-    
+
+    def is_system_package(self, pkg_name: str) -> bool:
+        """Check if a package is a system package that shouldn't be mapped between distributions
+        
+        Args:
+            pkg_name: Name of the package to check
+            
+        Returns:
+            True if the package is a system package, False otherwise
+        """
+        # Convert to lowercase for case-insensitive matching
+        pkg_lower = pkg_name.lower()
+        
+        # Define patterns for system packages
+        system_patterns = [
+            # Kernel packages
+            '-kernel', 'kernel-', 'linux-image', 'linux-headers',
+            # Firmware and drivers
+            '-firmware', 'firmware-', '-driver', 'driver-', 
+            'nvidia-', 'amd-', 'intel-', 'broadcom-',
+            # Hardware-specific packages
+            'alsa-', 'pulseaudio-', 'xorg-', 'wayland-',
+            # System core packages
+            'systemd-', 'udev-', 'dbus-', 'policykit-',
+            # Boot packages
+            'grub-', 'grub2-', 'shim-', 'efi-'
+        ]
+        
+        # Check if package name contains any system pattern
+        for pattern in system_patterns:
+            if pattern in pkg_lower:
+                return True
+                
+        # Explicit list of system packages (exact matches)
+        system_packages = {
+            'linux-firmware', 'nvidia-driver', 'amdgpu', 'xserver-xorg',
+            'linux-generic', 'linux-headers-generic', 'linux-image-generic',
+            'linux-restricted-modules', 'linux-backports-modules',
+            'firmware-linux', 'firmware-iwlwifi', 'firmware-atheros',
+            'firmware-brcm80211', 'firmware-realtek', 'firmware-amd-graphics',
+            'xorg-x11-drv-nvidia', 'akmod-nvidia', 'dkms-nvidia',
+            'xorg-x11-drv-amdgpu', 'xorg-x11-drv-intel',
+            'amdgpu-pro', 'amdgpu-pro-core', 'amdgpu-pro-dkms'
+        }
+        
+        return pkg_lower in system_packages
+
     def _get_equivalent_package_with_reason(self, pkg_name: str, source_type: str, target_type: str) -> Tuple[Optional[str], str]:
         """Get the equivalent package name with the reason for the mapping
         
