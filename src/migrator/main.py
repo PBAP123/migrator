@@ -1483,8 +1483,45 @@ class Migrator:
                                         logger.error(f"Error processing mapping result for {pkg}: {result_error}")
                                         continue
                                 
-                                logger.info(f"Successfully mapped {mapped_count} out of {len(processed_packages)} packages")
-                                print(f"Successfully mapped {mapped_count} out of {len(processed_packages)} packages")
+                                # Check if any packages were successfully mapped
+                                if mapped_count > 0:
+                                    logger.info(f"Successfully mapped {mapped_count} out of {len(processed_packages)} packages")
+                                    print(f"Successfully mapped {mapped_count} out of {len(processed_packages)} packages")
+                                else:
+                                    # No packages were mapped - this is a critical issue
+                                    logger.warning("No packages were successfully mapped. This is likely due to one of these issues:")
+                                    logger.warning("1. The DNF package manager may not be finding package availability correctly")
+                                    logger.warning("2. The package mapper may not be generating correct equivalent package names")
+                                    logger.warning("3. The equivalent package names might not be available in your repositories")
+                                    
+                                    # Try to diagnose the specific issue
+                                    sample_packages = processed_packages[:5]  # Take first 5 packages for diagnosis
+                                    logger.info("Diagnostic information for first few packages:")
+                                    
+                                    for pkg in sample_packages:
+                                        if isinstance(pkg, dict):
+                                            pkg_name = pkg.get('name', '')
+                                        else:
+                                            pkg_name = str(pkg)
+                                            
+                                        if not pkg_name:
+                                            continue
+                                            
+                                        # Get the equivalent package name
+                                        equiv_name, reason = self.package_mapper._get_equivalent_package_with_reason(
+                                            pkg_name, source_pkg_format, target_pkg_format)
+                                            
+                                        # Check if the equivalent package is available
+                                        if equiv_name:
+                                            is_avail = is_available(equiv_name)
+                                            logger.info(f"  Package {pkg_name} -> {equiv_name} (mapping: {reason}, available: {is_avail})")
+                                        else:
+                                            logger.info(f"  Package {pkg_name} -> {equiv_name} (mapping: {reason})")
+                                    
+                                    # Provide suggestion
+                                    logger.warning("Consider adding custom package mappings with 'migrator edit-mappings'")
+                                    print("WARNING: No packages were successfully mapped. See logs for diagnostic information.")
+                                    print("Try adding custom package mappings with 'migrator edit-mappings'")
                             else:
                                 logger.warning("No valid packages to process after pre-processing")
                                 

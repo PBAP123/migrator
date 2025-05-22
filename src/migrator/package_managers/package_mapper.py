@@ -147,6 +147,103 @@ class PackageMapper:
                 'dnf': 'gstreamer1-plugins-good',
                 'pacman': 'gst-plugins-good',
             },
+            
+            # Additional Debian/Ubuntu to Fedora mappings
+            'apt': {
+                'apt': 'apt',
+                'dnf': 'dnf',
+                'pacman': 'pacman',
+            },
+            'apt-utils': {
+                'apt': 'apt-utils',
+                'dnf': 'dnf-utils',
+                'pacman': 'pacman-contrib',
+            },
+            'aptitude': {
+                'apt': 'aptitude',
+                'dnf': 'dnf',
+                'pacman': 'pacman',
+            },
+            'nautilus': {
+                'apt': 'nautilus',
+                'dnf': 'nautilus',
+                'pacman': 'nautilus',
+            },
+            'gnome-terminal': {
+                'apt': 'gnome-terminal',
+                'dnf': 'gnome-terminal',
+                'pacman': 'gnome-terminal',
+            },
+            'gnome-tweaks': {
+                'apt': 'gnome-tweaks',
+                'dnf': 'gnome-tweaks',
+                'pacman': 'gnome-tweaks',
+            },
+            'software-properties-common': {
+                'apt': 'software-properties-common',
+                'dnf': 'dnf-plugins-core',
+                'pacman': 'pacman-contrib',
+            },
+            'gdebi': {
+                'apt': 'gdebi',
+                'dnf': 'dnf',
+                'pacman': 'pacman',
+            },
+            'apt-transport-https': {
+                'apt': 'apt-transport-https',
+                'dnf': 'dnf-plugins-core',
+                'pacman': 'pacman-contrib',
+            },
+            'xorg': {
+                'apt': 'xorg',
+                'dnf': 'xorg-x11-server-Xorg',
+                'pacman': 'xorg',
+            },
+            'build-essential': {
+                'apt': 'build-essential',
+                'dnf': 'gcc gcc-c++ make',
+                'pacman': 'base-devel',
+            },
+            'libssl-dev': {
+                'apt': 'libssl-dev',
+                'dnf': 'openssl-devel',
+                'pacman': 'openssl',
+            },
+            'ubuntu-restricted-extras': {
+                'apt': 'ubuntu-restricted-extras',
+                'dnf': 'rpmfusion-free-release rpmfusion-nonfree-release',
+                'pacman': 'base-devel',
+            },
+            'ubuntu-restricted-addons': {
+                'apt': 'ubuntu-restricted-addons',
+                'dnf': 'rpmfusion-free-release rpmfusion-nonfree-release',
+                'pacman': 'base-devel',
+            },
+            'gnome-software': {
+                'apt': 'gnome-software',
+                'dnf': 'gnome-software',
+                'pacman': 'gnome-software',
+            },
+            'packagekit': {
+                'apt': 'packagekit',
+                'dnf': 'PackageKit',
+                'pacman': 'packagekit',
+            },
+            'synaptic': {
+                'apt': 'synaptic',
+                'dnf': 'dnfdragora',
+                'pacman': 'pamac-gtk',
+            },
+            'zsh': {
+                'apt': 'zsh',
+                'dnf': 'zsh',
+                'pacman': 'zsh',
+            },
+            'gparted': {
+                'apt': 'gparted',
+                'dnf': 'gparted',
+                'pacman': 'gparted',
+            },
         }
         
         # Try to load user custom mappings and merge them
@@ -200,10 +297,22 @@ class PackageMapper:
         # Keep track of last progress update time to avoid too frequent updates
         last_update_time = time.time()
         
+        # Enable more detailed debugging for diagnostic purposes
+        debug_count = 0
+        mapped_count = 0
+        mapping_reasons = {
+            "direct": 0,
+            "custom": 0,
+            "pattern": 0,
+            "normalized": 0,
+            "failed": 0
+        }
+        
         # Process each package
         for i, pkg in enumerate(packages):
             # Default to no equivalent name found
             equivalent_name = None
+            mapping_reason = "failed"
             
             try:
                 # Extract package name based on package type
@@ -237,10 +346,23 @@ class PackageMapper:
                 
                 # Get equivalent package name - this is the simplest and safest approach
                 try:
-                    equivalent_name = self.get_equivalent_package(pkg_name, source_type, target_type)
+                    equivalent_name, mapping_reason = self._get_equivalent_package_with_reason(pkg_name, source_type, target_type)
+                    
+                    # Debug output for first few packages to understand mapping process
+                    if debug_count < 10:
+                        logger.info(f"Package mapping for {pkg_name}: {equivalent_name} (reason: {mapping_reason})")
+                        debug_count += 1
+                        
+                    # Count successful mappings by reason
+                    if equivalent_name:
+                        mapped_count += 1
+                        if mapping_reason in mapping_reasons:
+                            mapping_reasons[mapping_reason] += 1
+                        
                 except Exception as e:
                     logger.error(f"Error finding equivalent package for {pkg_name}: {e}")
                     equivalent_name = None
+                    mapping_reason = "error"
                 
                 # Check if the equivalent package is available if a check function was provided
                 if equivalent_name and available_check_fn:
@@ -253,6 +375,7 @@ class PackageMapper:
                                 )
                                 if similar_name:
                                     equivalent_name = similar_name
+                                    mapping_reason = "similar_search"
                                 else:
                                     # If no similar package found with the equivalent name, try with the original
                                     similar_name = self.find_package_with_similar_name(
@@ -260,6 +383,7 @@ class PackageMapper:
                                     )
                                     if similar_name:
                                         equivalent_name = similar_name
+                                        mapping_reason = "original_search"
                             except Exception as e:
                                 logger.error(f"Error finding similar package for {equivalent_name}: {e}")
                     except Exception as e:
@@ -285,11 +409,81 @@ class PackageMapper:
                 
                 last_update_time = current_time
         
-        # Final progress update
+        # Final progress update and statistics
         if not progress_callback:
             print()  # Add newline after progress reporting
+            
+        # Log summary of mapping statistics
+        logger.info(f"Package mapping complete: {mapped_count}/{total_packages} packages mapped")
+        logger.info(f"Mapping methods: Direct={mapping_reasons['direct']}, Custom={mapping_reasons['custom']}, " +
+                   f"Pattern={mapping_reasons['pattern']}, Normalized={mapping_reasons['normalized']}, " +
+                   f"Failed={mapping_reasons['failed']}")
         
         return results
+    
+    def _get_equivalent_package_with_reason(self, pkg_name: str, source_type: str, target_type: str) -> Tuple[Optional[str], str]:
+        """Get the equivalent package name with the reason for the mapping
+        
+        Args:
+            pkg_name: Original package name
+            source_type: Source package manager type (apt, dnf, pacman)
+            target_type: Target package manager type (apt, dnf, pacman)
+            
+        Returns:
+            Tuple of (equivalent package name or None, reason for mapping)
+        """
+        try:
+            # Safety checks
+            if not isinstance(pkg_name, str) or not pkg_name:
+                logger.warning(f"Invalid package name: {pkg_name}")
+                return None, "invalid"
+                
+            if not isinstance(source_type, str) or not source_type:
+                logger.warning(f"Invalid source type: {source_type}")
+                return None, "invalid"
+                
+            if not isinstance(target_type, str) or not target_type:
+                logger.warning(f"Invalid target type: {target_type}")
+                return None, "invalid"
+            
+            # Direct mapping if both source and target are the same
+            if source_type == target_type:
+                return pkg_name, "direct"
+                
+            # Strip architecture suffix if present
+            clean_pkg_name = pkg_name
+            if ':' in clean_pkg_name:
+                clean_pkg_name = clean_pkg_name.split(':')[0]
+            
+            # Check the equiv_map directly first
+            if clean_pkg_name in self.equiv_map:
+                mapping = self.equiv_map[clean_pkg_name]
+                if isinstance(mapping, dict) and target_type in mapping:
+                    target_name = mapping[target_type]
+                    if target_name:
+                        return target_name, "custom"
+            
+            # Check custom mappings using the format "source:target:package"
+            custom_mapping_key = f"{source_type}:{target_type}:{clean_pkg_name}"
+            if custom_mapping_key in self.equiv_map:
+                return self.equiv_map[custom_mapping_key], "custom"
+                
+            # Try pattern matching
+            pattern_match = self._pattern_match_package(clean_pkg_name, source_type, target_type)
+            if pattern_match:
+                return pattern_match, "pattern"
+        
+            # Try general normalization
+            normalized = self._normalize_package_name(clean_pkg_name, source_type, target_type)
+            if normalized and normalized != clean_pkg_name:
+                return normalized, "normalized"
+            
+            # No mapping found
+            return clean_pkg_name, "original"  # Return the original name (without arch suffix) as fallback
+            
+        except Exception as e:
+            logger.error(f"Error getting equivalent package for {pkg_name}: {e}")
+            return None, "error"
     
     def get_equivalent_package(self, pkg_name: str, source_type: str, target_type: str) -> Optional[str]:
         """Get the equivalent package name in a different package manager
@@ -302,50 +496,8 @@ class PackageMapper:
         Returns:
             Equivalent package name or None if no mapping exists
         """
-        try:
-            # Safety checks
-            if not isinstance(pkg_name, str) or not pkg_name:
-                logger.warning(f"Invalid package name: {pkg_name}")
-                return None
-                
-            if not isinstance(source_type, str) or not source_type:
-                logger.warning(f"Invalid source type: {source_type}")
-                return None
-                
-            if not isinstance(target_type, str) or not target_type:
-                logger.warning(f"Invalid target type: {target_type}")
-                return None
-            
-            # Direct mapping if both source and target are the same
-            if source_type == target_type:
-                return pkg_name
-                
-            # Strip architecture suffix if present
-            clean_pkg_name = pkg_name
-            if ':' in clean_pkg_name:
-                clean_pkg_name = clean_pkg_name.split(':')[0]
-            
-            # Check custom mappings first
-            custom_mapping_key = f"{source_type}:{target_type}:{clean_pkg_name}"
-            if custom_mapping_key in self.equiv_map:
-                return self.equiv_map[custom_mapping_key]
-                
-            # Try pattern matching
-            pattern_match = self._pattern_match_package(clean_pkg_name, source_type, target_type)
-            if pattern_match:
-                return pattern_match
-        
-            # Try general normalization
-            normalized = self._normalize_package_name(clean_pkg_name, source_type, target_type)
-            if normalized and normalized != clean_pkg_name:
-                return normalized
-            
-            # No mapping found
-            return clean_pkg_name  # Return the original name (without arch suffix) as fallback
-            
-        except Exception as e:
-            logger.error(f"Error getting equivalent package for {pkg_name}: {e}")
-            return None
+        result, _ = self._get_equivalent_package_with_reason(pkg_name, source_type, target_type)
+        return result
         
     def _pattern_match_package(self, pkg_name: str, source_type: str, target_type: str) -> Optional[str]:
         """Apply pattern matching to find equivalent packages
@@ -477,9 +629,27 @@ class PackageMapper:
                     # RPM-based systems use -devel instead of -dev
                     normalized = re.sub(r'-dev$', '-devel', normalized)
                     
+                    # Debian-specific package normalization
+                    if normalized.startswith('libssl-dev'):
+                        normalized = 'openssl-devel'
+                    elif normalized.startswith('libpq-dev'):
+                        normalized = 'libpq-devel'
+                    elif normalized.startswith('libsqlite3-dev'):
+                        normalized = 'sqlite-devel'
+                    elif normalized == 'build-essential':
+                        normalized = 'gcc'
+                    
                 elif target_type == 'apt' and source_type == 'dnf':
                     # Debian/Ubuntu use -dev instead of -devel
                     normalized = re.sub(r'-devel$', '-dev', normalized)
+                    
+                    # Fedora-specific package normalization
+                    if normalized.startswith('openssl-devel'):
+                        normalized = 'libssl-dev'
+                    elif normalized.startswith('libpq-devel'):
+                        normalized = 'libpq-dev'
+                    elif normalized.startswith('sqlite-devel'):
+                        normalized = 'libsqlite3-dev'
             except Exception as e:
                 logger.error(f"Error in specific transformations for package {pkg_name}: {e}")
             
@@ -678,4 +848,79 @@ class PackageMapper:
             return None
         except Exception as e:
             logger.error(f"Error searching for package {pkg_name}: {e}")
-            return None 
+            return None
+
+    def create_custom_mapping(self, source_name: str, source_type: str, target_name: str, target_type: str) -> bool:
+        """Create a custom mapping between two packages
+        
+        Args:
+            source_name: Original package name
+            source_type: Source package manager type (apt, dnf, pacman)
+            target_name: Target package name
+            target_type: Target package manager type (apt, dnf, pacman)
+            
+        Returns:
+            True if mapping was created successfully, False otherwise
+        """
+        try:
+            # Ensure source_name and target_name are strings
+            if not isinstance(source_name, str) or not source_name:
+                logger.error("Invalid source package name")
+                return False
+                
+            if not isinstance(target_name, str) or not target_name:
+                logger.error("Invalid target package name")
+                return False
+                
+            # Ensure source_type and target_type are valid
+            if source_type not in ('apt', 'dnf', 'pacman'):
+                logger.error(f"Invalid source package manager type: {source_type}")
+                return False
+                
+            if target_type not in ('apt', 'dnf', 'pacman'):
+                logger.error(f"Invalid target package manager type: {target_type}")
+                return False
+                
+            # Create the user mappings directory if it doesn't exist
+            user_map_dir = os.path.expanduser('~/.config/migrator')
+            user_map_path = os.path.join(user_map_dir, 'package_mappings.json')
+            
+            if not os.path.exists(user_map_dir):
+                os.makedirs(user_map_dir)
+                
+            # Load existing mappings or create empty dict
+            user_map = {}
+            if os.path.exists(user_map_path):
+                try:
+                    with open(user_map_path, 'r') as f:
+                        user_map = json.load(f)
+                except Exception as e:
+                    logger.error(f"Error loading existing mappings: {e}")
+                    user_map = {}
+                    
+            # Add or update the mapping
+            if source_name not in user_map:
+                user_map[source_name] = {}
+            
+            user_map[source_name][target_type] = target_name
+            
+            # Also add the key format for direct lookup
+            custom_key = f"{source_type}:{target_type}:{source_name}"
+            user_map[custom_key] = target_name
+            
+            # Save the updated mappings
+            with open(user_map_path, 'w') as f:
+                json.dump(user_map, f, indent=2)
+                
+            # Update the in-memory map
+            if source_name not in self.equiv_map:
+                self.equiv_map[source_name] = {}
+            self.equiv_map[source_name][target_type] = target_name
+            self.equiv_map[custom_key] = target_name
+            
+            logger.info(f"Created custom mapping: {source_name} ({source_type}) -> {target_name} ({target_type})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error creating custom mapping: {e}")
+            return False 
