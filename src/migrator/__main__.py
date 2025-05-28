@@ -52,8 +52,8 @@ def setup_argparse() -> argparse.ArgumentParser:
               migrator scan               # Scan and update system state
               migrator scan --include-desktop  # Include desktop environment configs
               migrator backup ~/backups   # Backup system state to directory
-              migrator restore backup.json # Restore from backup
-              migrator restore backup.json --execute  # Restore and install packages/configs
+              migrator restore backup.json # Preview restore (no changes made)
+              migrator restore backup.json --execute  # Actually restore and install packages/configs
               migrator restore backup.json --packages-only  # Only install packages
               migrator compare backup.json # Compare current system with backup
               migrator plan backup.json   # Generate installation plan from backup
@@ -115,7 +115,7 @@ def setup_argparse() -> argparse.ArgumentParser:
     restore_parser = subparsers.add_parser('restore', help='Restore system state from backup')
     restore_parser.add_argument('backup_file', help='Backup file to restore from')
     restore_parser.add_argument('--execute', '-e', action='store_true', 
-                             help='Automatically install packages and restore config files')
+                             help='Actually install packages and restore config files (without this flag, only preview mode runs)')
     restore_parser.add_argument('--packages-only', action='store_true',
                              help='Only install packages, skip config files')
     restore_parser.add_argument('--configs-only', action='store_true',
@@ -675,6 +675,24 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     # Default behavior: just restore the state without execution
     execute_plan = args.execute if hasattr(args, 'execute') else False
     
+    # Make it clear to the user what mode we're in
+    if not execute_plan:
+        print("\n" + "="*60)
+        print("PREVIEW MODE - No changes will be made to your system")
+        print("="*60)
+        print("The backup will be loaded and analyzed, but packages will NOT be installed")
+        print("and configuration files will NOT be restored.")
+        print("")
+        print("To actually install packages and restore configs, use:")
+        print(f"  migrator restore {args.backup_file} --execute")
+        print("="*60)
+    else:
+        print("\n" + "="*60)
+        print("EXECUTION MODE - Changes will be made to your system")
+        print("="*60)
+        print("Packages will be installed and configuration files will be restored.")
+        print("="*60)
+    
     # Check if any specific command line arguments were provided for restore categories
     has_category_args = any([
         hasattr(args, 'packages_only') and args.packages_only,
@@ -893,6 +911,14 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
     
     print("System state restored successfully.")
     
+    # In preview mode, offer to execute the restore
+    if not execute_plan:
+        print("\nWould you like to proceed with installing packages and restoring configurations?")
+        choice = input("Enter 'yes' to execute the restore, or 'no' to exit: ").lower().strip()
+        if choice in ['yes', 'y']:
+            print("\nProceeding with execution...")
+            execute_plan = True
+    
     # Execute installation plan if requested
     if execute_plan and not configs_only:
         print("Installing packages from backup...")
@@ -975,7 +1001,23 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
             logger.error(f"Error restoring repositories: {e}")
             print(f"Error restoring repositories: {e}")
     
-    print("\nRestore operation completed.")
+    if not execute_plan:
+        print("\n" + "="*60)
+        print("PREVIEW COMPLETED - No changes were made to your system")
+        print("="*60)
+        print("The backup has been analyzed and loaded into the system state.")
+        print("No packages were installed and no configuration files were restored.")
+        print("")
+        print("To actually restore packages and configs, run:")
+        print(f"  migrator restore {args.backup_file} --execute")
+        print("="*60)
+    else:
+        print("\n" + "="*60)
+        print("RESTORE OPERATION COMPLETED")
+        print("="*60)
+        print("Packages have been installed and configuration files have been restored.")
+        print("="*60)
+    
     return 0
 
 def handle_compare(app: Migrator, args: argparse.Namespace) -> int:
