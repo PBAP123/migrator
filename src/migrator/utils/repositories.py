@@ -726,12 +726,13 @@ class RepositoryManager:
                 
         return issues
     
-    def restore_repositories(self, backup_data: Dict[str, Any], dry_run: bool = False) -> Tuple[List[str], List[Dict[str, Any]]]:
+    def restore_repositories(self, backup_data: Dict[str, Any], dry_run: bool = False, force_incompatible: bool = False) -> Tuple[List[str], List[Dict[str, Any]]]:
         """Restore repositories from backup data
         
         Args:
             backup_data: Repository backup data
             dry_run: If True, only simulate restoration
+            force_incompatible: If True, restore incompatible repositories with warnings
             
         Returns:
             Tuple of (success messages, errors/issues)
@@ -749,18 +750,26 @@ class RepositoryManager:
         compatibility_issues = self.check_compatibility(backup_data)
         if compatibility_issues:
             for issue in compatibility_issues:
-                issues.append({
-                    "type": "compatibility",
-                    "message": issue["issue"],
-                    "repo_name": issue["name"]
-                })
+                if force_incompatible:
+                    issues.append({
+                        "type": "warning",
+                        "message": f"Forcing restoration of incompatible repository: {issue['issue']}",
+                        "repo_name": issue["name"]
+                    })
+                else:
+                    issues.append({
+                        "type": "compatibility",
+                        "message": issue["issue"],
+                        "repo_name": issue["name"]
+                    })
                 
-            # We'll still try to restore compatible repositories
-            compatible_repos = [
-                repo for repo in repositories 
-                if not any(issue["repo_id"] == repo.repo_id for issue in compatibility_issues)
-            ]
-            repositories = compatible_repos
+            # Filter out incompatible repositories unless force_incompatible is True
+            if not force_incompatible:
+                compatible_repos = [
+                    repo for repo in repositories 
+                    if not any(issue["repo_id"] == repo.repo_id for issue in compatibility_issues)
+                ]
+                repositories = compatible_repos
             
         # Group repositories by type for efficient restoration
         repos_by_type = {}

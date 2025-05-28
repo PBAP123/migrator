@@ -2058,8 +2058,61 @@ class Migrator:
                         break
                         
                 if not manager:
-                    logger.warning(f"Package manager '{manager_name}' not available on this system")
-                    print(f"Package manager '{manager_name}' not available - skipping {len(pkgs)} packages")
+                    # Attempt cross-package-manager mapping
+                    logger.info(f"Package manager '{manager_name}' not available, attempting cross-package-manager mapping")
+                    print(f"Package manager '{manager_name}' not available - attempting to map {len(pkgs)} packages to available package managers")
+                    
+                    # Use package mapper to find equivalent packages
+                    from .package_managers.package_mapper import PackageMapper
+                    mapper = PackageMapper()
+                    mapped_packages = {}
+                    
+                    for pkg in pkgs:
+                        equivalent_packages = mapper.find_equivalent_packages(
+                            pkg.get("name", ""), 
+                            source_manager=manager_name,
+                            target_managers=[pm.name for pm in self.package_managers]
+                        )
+                        
+                        # Group mapped packages by target manager
+                        for target_mgr, mapped_pkg in equivalent_packages:
+                            if target_mgr not in mapped_packages:
+                                mapped_packages[target_mgr] = []
+                            mapped_packages[target_mgr].append({
+                                "name": mapped_pkg,
+                                "source": target_mgr,
+                                "original_name": pkg.get("name", ""),
+                                "original_source": manager_name
+                            })
+                    
+                    # Install mapped packages
+                    for target_mgr, mapped_pkgs in mapped_packages.items():
+                        target_manager = None
+                        for pm in self.package_managers:
+                            if pm.name == target_mgr:
+                                target_manager = pm
+                                break
+                        
+                        if target_manager:
+                            logger.info(f"Installing {len(mapped_pkgs)} packages mapped from {manager_name} to {target_mgr}")
+                            print(f"\nInstalling {len(mapped_pkgs)} packages mapped from {manager_name} to {target_mgr}...")
+                            
+                            success_count = 0
+                            for i, pkg in enumerate(mapped_pkgs):
+                                try:
+                                    print(f"  [{i+1}/{len(mapped_pkgs)}] Installing {pkg['name']} (mapped from {pkg['original_name']})...")
+                                    if target_manager.install_package(pkg["name"]):
+                                        success_count += 1
+                                        logger.info(f"Successfully installed {pkg['name']} (mapped from {pkg['original_name']})")
+                                    else:
+                                        logger.warning(f"Failed to install {pkg['name']} (mapped from {pkg['original_name']})")
+                                        print(f"    Warning: Failed to install {pkg['name']}")
+                                except Exception as e:
+                                    logger.error(f"Error installing {pkg['name']} (mapped from {pkg['original_name']}): {e}")
+                                    print(f"    Error: {str(e)}")
+                            
+                            print(f"  Successfully installed {success_count}/{len(mapped_pkgs)} mapped packages")
+                    
                     continue
                     
                 logger.info(f"Installing {len(pkgs)} packages with {manager_name}")
@@ -2201,8 +2254,11 @@ class Migrator:
                                 # Add entries that don't already exist
                                 entries_to_add = []
                                 for entry in portable_entries:
-                                    if entry not in current_fstab:
-                                        entries_to_add.append(entry)
+                                    from .utils.fstab import FstabEntry
+                                    fstab_entry = FstabEntry.from_dict(entry)
+                                    entry_line = fstab_entry.to_line()
+                                    if entry_line not in current_fstab:
+                                        entries_to_add.append(fstab_entry)
                                 
                                 if entries_to_add:
                                     # Make backup of current fstab
@@ -2213,7 +2269,7 @@ class Migrator:
                                     with open("/etc/fstab", 'a') as f:
                                         f.write("\n# Added by Migrator restoration\n")
                                         for entry in entries_to_add:
-                                            f.write(f"{entry}\n")
+                                            f.write(f"{entry.to_line()}\n")
                                             
                                     print(f"Added {len(entries_to_add)} portable fstab entries")
                                     print(f"Original fstab backed up to {backup_path}")
@@ -2249,11 +2305,50 @@ class Migrator:
                     config_files = filtered_config_files
             
             # Restore configuration files
-            configs_dir = os.path.join(os.path.dirname(backup_file), "config_files")
+            configs_base_dir = os.path.join(os.path.dirname(backup_file), "config_files")
             transformed_count = 0
             restored_count = 0
             
-            if os.path.exists(configs_dir):
+            # Find the timestamped config directory that matches the backup file
+            configs_dir = None
+            if os.path.exists(configs_base_dir):
+                # Extract timestamp from backup filename
+                backup_filename = os.path.basename(backup_file)
+                backup_timestamp = None
+                
+                # Try to extract timestamp from backup filename (format: backup_YYYYMMDD_HHMMSS.json)
+                import re
+                timestamp_match = re.search(r'(\d{8}_\d{6})', backup_filename)
+                if timestamp_match:
+                    backup_timestamp = timestamp_match.group(1)
+                    logger.info(f"Extracted timestamp from backup filename: {backup_timestamp}")
+                
+                # Look for matching timestamped config directory
+                if backup_timestamp:
+                    expected_config_dir = os.path.join(configs_base_dir, backup_timestamp)
+                    if os.path.exists(expected_config_dir):
+                        configs_dir = expected_config_dir
+                        logger.info(f"Using matching config backup directory: {backup_timestamp}")
+                    else:
+                        logger.warning(f"Expected config directory not found: {expected_config_dir}")
+                
+                # If no matching timestamp found, fall back to searching available directories
+                if not configs_dir:
+                    timestamp_dirs = [d for d in os.listdir(configs_base_dir) 
+                                    if os.path.isdir(os.path.join(configs_base_dir, d)) and 
+                                       len(d) == 15 and d[8] == '_']  # Format: YYYYMMDD_HHMMSS
+                    
+                    if timestamp_dirs:
+                        # Use the most recent timestamp directory as fallback
+                        latest_timestamp = sorted(timestamp_dirs)[-1]
+                        configs_dir = os.path.join(configs_base_dir, latest_timestamp)
+                        logger.warning(f"Using fallback config backup from: {latest_timestamp}")
+                    else:
+                        # Fallback to base directory for older backup format
+                        configs_dir = configs_base_dir
+                        logger.warning("No timestamped config directory found, using base config_files directory")
+            
+            if configs_dir and os.path.exists(configs_dir):
                 for cfg in config_files:
                     path = cfg.get("path", "")
                     category = cfg.get("category", "")
@@ -2527,7 +2622,10 @@ class Migrator:
                                 current_fstab = f.read()
                                 
                             for entry in portable_entries:
-                                if entry in current_fstab:
+                                from .utils.fstab import FstabEntry
+                                fstab_entry = FstabEntry.from_dict(entry)
+                                entry_line = fstab_entry.to_line()
+                                if entry_line in current_fstab:
                                     report["conflicts"].append({
                                         "type": "fstab_conflict",
                                         "entry": entry,
