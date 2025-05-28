@@ -555,6 +555,8 @@ def handle_restore(app: Migrator, args: argparse.Namespace) -> int:
         # Create plan args and call handle_plan
         plan_args = argparse.Namespace()
         plan_args.backup_file = args.backup_file
+        plan_args.output = None
+        plan_args.format = 'text'
         handle_plan(app, plan_args)
         
         # Ask if they want to continue
