@@ -1437,6 +1437,64 @@ class PackageMapper:
             logger.error(f"Error searching for package {pkg_name}: {e}")
             return None
 
+    def find_equivalent_packages(self, package_name: str, source_manager: str, target_managers: List[str]) -> List[Tuple[str, str]]:
+        """Find equivalent packages for a given package across multiple target managers
+        
+        Args:
+            package_name: Name of the package to map
+            source_manager: Source package manager type (apt, dnf, pacman)
+            target_managers: List of target package manager types
+            
+        Returns:
+            List of tuples (target_manager, equivalent_package_name)
+        """
+        results = []
+        
+        try:
+            # Safety check for inputs
+            if not isinstance(package_name, str) or not package_name:
+                logger.warning(f"Invalid package name: {package_name}")
+                return results
+                
+            if not isinstance(source_manager, str) or not source_manager:
+                logger.warning(f"Invalid source manager: {source_manager}")
+                return results
+                
+            if not isinstance(target_managers, list):
+                logger.warning(f"Invalid target managers: {target_managers}")
+                return results
+            
+            # Find equivalent package for each target manager
+            for target_manager in target_managers:
+                if not isinstance(target_manager, str) or not target_manager:
+                    logger.warning(f"Skipping invalid target manager: {target_manager}")
+                    continue
+                    
+                # Skip if source and target are the same
+                if source_manager == target_manager:
+                    results.append((target_manager, package_name))
+                    continue
+                
+                # Get equivalent package name
+                equivalent_pkg = self.get_equivalent_package(
+                    package_name, 
+                    source_manager, 
+                    target_manager
+                )
+                
+                if equivalent_pkg:
+                    results.append((target_manager, equivalent_pkg))
+                    logger.debug(f"Mapped {package_name} ({source_manager}) → {equivalent_pkg} ({target_manager})")
+                else:
+                    # If no mapping found, use original name as fallback
+                    results.append((target_manager, package_name))
+                    logger.debug(f"No mapping found for {package_name} ({source_manager} → {target_manager}), using original name")
+                    
+        except Exception as e:
+            logger.error(f"Error finding equivalent packages for {package_name}: {e}")
+            
+        return results
+
     def create_custom_mapping(self, source_name: str, source_type: str, target_name: str, target_type: str) -> bool:
         """Create a custom mapping between two packages
         
