@@ -20,8 +20,7 @@ class PacmanPackageManager(PackageManager):
     def __init__(self):
         super().__init__('pacman')
         
-        # Check if we have sudo privileges
-        self.has_sudo = self._check_sudo()
+        # Note: We automatically use sudo for install operations when needed
     
     def _check_sudo(self) -> bool:
         """Check if we have sudo privileges"""
@@ -215,10 +214,6 @@ class PacmanPackageManager(PackageManager):
         Here we just attempt to install the package with the assumption that the
         repositories have the desired version.
         """
-        if not self.has_sudo:
-            logger.error("Sudo privileges required to install packages")
-            return False
-        
         try:
             # Check if version is available
             if version:
@@ -227,8 +222,8 @@ class PacmanPackageManager(PackageManager):
                     logger.warning(f"Requested version {version} for {package_name} is not available. Latest is {latest}.")
                     return False
             
-            # For Pacman, we use -S to install
-            cmd = ['pacman', '-S', '--noconfirm', package_name]
+            # Use sudo for pacman install commands since they require root privileges
+            cmd = ['sudo', 'pacman', '-S', '--noconfirm', package_name]
             
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
             return result.returncode == 0

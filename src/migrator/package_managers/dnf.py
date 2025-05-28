@@ -32,8 +32,7 @@ class DnfPackageManager(PackageManager):
         self.rpm_path = '/usr/bin/rpm'
         self.dnf_path = '/usr/bin/dnf'
         
-        # Check if we have sudo privileges
-        self.has_sudo = self._check_sudo()
+        # Note: We automatically use sudo for install operations when needed
         
         # Handle timestamp ranges - platform specific maximum
         self.max_timestamp = 2147483647  # Default max for 32-bit systems
@@ -655,12 +654,9 @@ class DnfPackageManager(PackageManager):
     
     def install_package(self, package_name: str, version: Optional[str] = None) -> bool:
         """Install a package using DNF"""
-        if not self.has_sudo:
-            logger.error("Sudo privileges required to install packages")
-            return False
-        
         try:
-            cmd = [self.dnf_path, 'install', '-y']
+            # Use sudo for dnf install commands since they require root privileges
+            cmd = ['sudo', self.dnf_path, 'install', '-y']
             
             if version:
                 # For DNF, we use package-version format

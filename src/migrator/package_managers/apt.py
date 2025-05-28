@@ -23,8 +23,7 @@ class AptPackageManager(PackageManager):
         self.apt_cache_path = '/usr/bin/apt-cache'
         self.apt_path = '/usr/bin/apt'
         
-        # Check if we have sudo privileges
-        self.has_sudo = self._check_sudo()
+        # Note: We automatically use sudo for install operations when needed
     
     def _check_sudo(self) -> bool:
         """Check if we have sudo privileges"""
@@ -272,12 +271,9 @@ class AptPackageManager(PackageManager):
     
     def install_package(self, package_name: str, version: Optional[str] = None) -> bool:
         """Install a package using APT"""
-        if not self.has_sudo:
-            logger.error("Sudo privileges required to install packages")
-            return False
-        
         try:
-            cmd = [self.apt_path, 'install', '-y']
+            # Use sudo for apt install commands since they require root privileges
+            cmd = ['sudo', self.apt_path, 'install', '-y']
             if version:
                 cmd.append(f"{package_name}={version}")
             else:

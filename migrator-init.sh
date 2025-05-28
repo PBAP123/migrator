@@ -65,6 +65,52 @@ is_migrator_installed() {
     return 1
 }
 
+# Create system-wide symlink for sudo compatibility
+create_system_symlink() {
+    print_header "Setting up System-wide Access"
+    
+    local system_bin_dir="/usr/local/bin"
+    local system_link="$system_bin_dir/migrator"
+    
+    # Check if symlink already exists and is correct
+    if [ -L "$system_link" ] && [ "$(readlink "$system_link")" = "$WRAPPER_PATH" ]; then
+        print_success "System-wide symlink already exists and is correct"
+        return 0
+    fi
+    
+    # Ask user for permission to create system-wide symlink
+    echo "Migrator is a system migration tool that requires sudo privileges to install packages."
+    echo "To make 'sudo migrator' work seamlessly, we can create a system-wide symlink."
+    echo
+    read -p "Create system-wide symlink for sudo compatibility? (recommended) [Y/n]: " choice
+    
+    case "$choice" in
+        [Nn]*)
+            print_warning "System-wide symlink skipped."
+            print_warning "You'll need to use: sudo $WRAPPER_PATH"
+            return 0
+            ;;
+        *)
+            # Default to yes
+            ;;
+    esac
+    
+    # Try to create the symlink
+    if command -v sudo &>/dev/null; then
+        if sudo ln -sf "$WRAPPER_PATH" "$system_link" 2>/dev/null; then
+            print_success "System-wide symlink created: $system_link -> $WRAPPER_PATH"
+            print_success "You can now use: sudo migrator"
+        else
+            print_warning "Failed to create system-wide symlink (permission denied or sudo not available)"
+            print_warning "You can create it manually with: sudo ln -sf $WRAPPER_PATH $system_link"
+            print_warning "Or use: sudo $WRAPPER_PATH"
+        fi
+    else
+        print_warning "sudo not available, cannot create system-wide symlink"
+        print_warning "You can create it manually as root: ln -sf $WRAPPER_PATH $system_link"
+    fi
+}
+
 # Create the wrapper scripts if they're missing
 create_wrapper_scripts() {
     print_header "Creating Wrapper Scripts"
@@ -150,6 +196,9 @@ install_migrator() {
         create_wrapper_scripts
     fi
     
+    # Create system-wide symlink for sudo compatibility
+    create_system_symlink
+    
     print_success "Migrator installed successfully!"
 }
 
@@ -166,6 +215,11 @@ update_migrator() {
     
     # Recreate wrapper scripts to ensure they're up to date
     create_wrapper_scripts
+    
+    # Update system-wide symlink if it exists
+    if [ -L "/usr/local/bin/migrator" ]; then
+        create_system_symlink
+    fi
     
     print_success "Migrator updated successfully!"
 }
@@ -215,6 +269,17 @@ uninstall_migrator() {
         print_success "Wrapper script removed successfully"
     else
         print_warning "Wrapper script not found at $WRAPPER_PATH"
+    fi
+    
+    echo "Removing system-wide symlink..."
+    if [ -L "/usr/local/bin/migrator" ]; then
+        if command -v sudo &>/dev/null; then
+            sudo rm -f "/usr/local/bin/migrator" 2>/dev/null && print_success "System-wide symlink removed" || print_warning "Failed to remove system-wide symlink"
+        else
+            print_warning "Cannot remove system-wide symlink (sudo not available)"
+        fi
+    else
+        print_success "No system-wide symlink found"
     fi
     
     echo "Cleaning up configuration files..."
