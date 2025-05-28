@@ -8,7 +8,11 @@ import sys
 import getpass
 import subprocess
 import logging
-import pkg_resources
+try:
+    from importlib.metadata import version
+except ImportError:
+    # Fallback for Python < 3.8
+    from importlib_metadata import version
 import shutil
 from pathlib import Path
 

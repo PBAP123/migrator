@@ -36,9 +36,9 @@ class PackageMapper:
     
     def __init__(self):
         self.equiv_map = {}
-        self.load_equivalence_map()
         self.search_cache = {}  # Cache for package search results
         self.custom_mappings = {}  # Initialize custom_mappings attribute
+        self.load_equivalence_map()
         
     def load_equivalence_map(self):
         """Load the package equivalence map from built-in data and user customizations"""

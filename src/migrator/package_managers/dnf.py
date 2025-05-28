@@ -50,6 +50,9 @@ class DnfPackageManager(PackageManager):
         
         # Version cache to avoid redundant queries
         self.version_cache = {}
+        
+        # Cache for user-installed packages to avoid repeated DNF calls
+        self.user_installed_cache = None
     
     def _check_sudo(self) -> bool:
         """Check if we have sudo privileges"""
@@ -166,15 +169,53 @@ class DnfPackageManager(PackageManager):
             self.cache_timestamp = 0
             return False
     
+    def _load_user_installed_cache(self):
+        """Load the list of user-installed packages once to avoid repeated DNF calls"""
+        if self.user_installed_cache is not None:
+            return  # Already loaded
+            
+        logger.info("Loading user-installed packages list...")
+        try:
+            cmd = ['dnf', 'history', 'userinstalled']
+            result = self._safe_run_rpm_command(cmd, check=False, timeout=30)
+            
+            if result.returncode == 0:
+                # Parse the output to get package names
+                self.user_installed_cache = set()
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    # Skip empty lines, headers, and metadata lines
+                    if (line and 
+                        not line.startswith('Last metadata') and 
+                        not line.startswith('Failed') and
+                        not line.startswith('Error') and
+                        not line == 'userinstalled' and
+                        not line.startswith('=')):
+                        # Each line should be a package name
+                        self.user_installed_cache.add(line)
+                        
+                logger.info(f"Loaded {len(self.user_installed_cache)} user-installed packages")
+            else:
+                logger.warning(f"Failed to get user-installed packages list (return code {result.returncode}), using fallback")
+                logger.debug(f"DNF userinstalled stderr: {result.stderr}")
+                self.user_installed_cache = set()
+                
+        except Exception as e:
+            logger.warning(f"Error loading user-installed packages: {e}")
+            self.user_installed_cache = set()
+    
     def list_installed_packages(self) -> List[Package]:
         """List all packages installed via DNF/RPM"""
         packages = []
         invalid_timestamp_count = 0
         
+        # Load user-installed packages cache once
+        self._load_user_installed_cache()
+        
         try:
             # Get list of installed packages with their versions
             cmd = [self.rpm_path, '-qa', '--queryformat', '%{NAME} %{VERSION}-%{RELEASE} %{SUMMARY}\\n']
-            result = self._safe_run_rpm_command(cmd)
+            result = self._safe_run_rpm_command(cmd, timeout=60)
             
             # Parse rpm output
             for line in result.stdout.splitlines():
@@ -274,17 +315,12 @@ class DnfPackageManager(PackageManager):
     
     def is_user_installed(self, package_name: str) -> bool:
         """Check if a package was explicitly installed by the user"""
-        try:
-            # In DNF, packages explicitly installed usually appear in the "install" transaction
-            cmd = ['dnf', 'history', 'userinstalled']
-            result = self._safe_run_rpm_command(cmd, check=False)
+        # Load the cache if not already loaded
+        if self.user_installed_cache is None:
+            self._load_user_installed_cache()
             
-            if result.returncode != 0:
-                return False
-                
-            return package_name in result.stdout
-        except subprocess.SubprocessError:
-            return False
+        # Use the cached set for fast lookup
+        return package_name in self.user_installed_cache
     
     def is_package_available(self, package_name: str) -> bool:
         """Check if a package is available in the DNF repositories"""
